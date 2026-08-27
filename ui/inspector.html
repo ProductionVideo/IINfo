@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IINfo</title>
+<style>
+  :root {
+    --bg: #14161b;
+    --panel: #1d1f26;
+    --panel-2: #262932;
+    --border: #343945;
+    --text: #eef0f5;
+    --dim: #a2a8b6;
+    --faint: #737a8a;
+    --accent: #56a8ff;
+    --good: #4ccb7d;
+    --warn: #ffc94d;
+    --bad: #ff5f5f;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eef0f3; --panel: #ffffff; --panel-2: #e9ebef; --border: #d3d6dd;
+      --text: #14171c; --dim: #545b68; --faint: #838996;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 13px; line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* ================= toolbar ================= */
+  .toolbar {
+    flex: 0 0 auto;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 9px 11px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .file-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .fname {
+    font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; flex: 1; min-width: 0; direction: rtl; text-align: left;
+  }
+  .chip {
+    font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 5px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--dim);
+    white-space: nowrap;
+  }
+  .chip.playing { color: var(--good); border-color: var(--good); }
+  .chip.paused  { color: var(--warn); border-color: var(--warn); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  .chip.bad  { color: var(--bad);  border-color: var(--bad); }
+  .chip.good { color: var(--good); border-color: var(--good); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .group { display: flex; gap: 4px; }
+  button {
+    font-family: var(--sans); font-size: 12px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 11px; cursor: pointer; white-space: nowrap;
+    min-height: 36px; line-height: 1; display: inline-flex; align-items: center; gap: 5px;
+  }
+  button:hover { border-color: var(--accent); background: var(--border); }
+  button:active { transform: translateY(1px); }
+  button.mono { font-family: var(--mono); }
+  button.primary {
+    min-width: 52px; justify-content: center; font-size: 16px;
+    background: var(--accent); border-color: var(--accent); color: #06121f;
+  }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  button.wide { min-width: 46px; justify-content: center; }
+
+  .jump {
+    display: flex; align-items: center; gap: 0; flex: 1; min-width: 150px;
+  }
+  .jump input {
+    flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px 0 0 7px; padding: 8px 9px; min-height: 36px; border-right: 0;
+  }
+  .jump input:focus { outline: none; border-color: var(--accent); }
+  .jump button { border-radius: 0 7px 7px 0; }
+
+  /* ================= essentials strip ================= */
+  .essentials {
+    flex: 0 0 auto; background: var(--bg);
+    border-bottom: 1px solid var(--border); padding: 8px 11px 10px;
+    display: flex; flex-direction: column; gap: 2px; align-items: center;
+  }
+  .ess-tc { font-family: var(--mono); font-size: clamp(26px, 9vw, 40px); font-weight: 650; letter-spacing: .01em; }
+  .ess-tc .sep { color: var(--accent); }
+  .ess-frame { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  .ess-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; justify-content: center; margin-top: 4px; }
+
+  /* ================= scroll area ================= */
+  main {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    padding: 11px; display: flex; flex-direction: column; gap: 11px;
+  }
+  .panel { flex: 0 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .panel[hidden] { display: none; }
+  .panel h2 {
+    font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--faint); padding: 9px 11px; background: var(--panel-2);
+    border-bottom: 1px solid var(--border); display: flex; justify-content: space-between;
+    align-items: center; gap: 8px;
+  }
+  .panel h2 .tag { font-family: var(--mono); font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .panel .body { padding: 10px 11px; }
+
+  .kv { display: grid; grid-template-columns: minmax(96px, 44%) 1fr; gap: 4px 12px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { font-family: var(--mono); text-align: right; word-break: break-all; font-size: 12.5px; }
+  .kv dd.hl   { color: var(--accent); }
+  .kv dd.bad  { color: var(--bad); font-weight: 600; }
+  .kv dd.warn { color: var(--warn); }
+  .kv dd.good { color: var(--good); }
+  .kv dd.dim  { color: var(--faint); }
+
+  canvas.spark { width: 100%; height: 40px; display: block; background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; }
+  .cap { color: var(--faint); font-size: 10.5px; margin: 8px 0 3px; font-family: var(--mono); }
+
+  /* meters */
+  .meter-wrap { display: flex; gap: 8px; }
+  .scale { display: flex; flex-direction: column; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--faint); padding: 3px 0 16px; text-align: right; min-width: 22px; }
+  .meters { display: flex; gap: 7px; align-items: stretch; height: 176px; flex: 1; }
+  .meter-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+  .meter-track { position: relative; width: 100%; flex: 1 1 auto; min-height: 40px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .meter-fill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(0deg, var(--good), var(--good) 58%, var(--warn) 80%, var(--bad)); }
+  .meter-peak { position: absolute; left: 0; right: 0; height: 2px; background: var(--text); }
+  .meter-hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--bad); }
+  .meter-label { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+  .meter-val { font-family: var(--mono); font-size: 10px; color: var(--text); }
+  .meter-val.clip { color: var(--bad); font-weight: 700; }
+
+  canvas.wave { width: 100%; display: block; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+
+  .hint { color: var(--faint); font-size: 11px; text-align: center; padding: 10px 6px; }
+  .hint.bad { color: var(--bad); }
+  .badge { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border); color: var(--dim); }
+  .badge.I { color: var(--bad); border-color: var(--bad); }
+  .badge.P { color: var(--warn); border-color: var(--warn); }
+  .badge.B { color: var(--good); border-color: var(--good); }
+
+  /* panels drawer */
+  #drawer { display: none; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 9px 11px; flex-wrap: wrap; gap: 8px 16px; }
+  #drawer.open { display: flex; }
+  #drawer label { display: flex; align-items: center; gap: 6px; color: var(--dim); cursor: pointer; user-select: none; font-size: 12px; }
+  #drawer input, .seg input { accent-color: var(--accent); }
+  .seg { display: inline-flex; gap: 10px; align-items: center; font-size: 11px; color: var(--dim); }
+
+  dialog {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; width: 92%; max-width: 420px;
+  }
+  dialog textarea {
+    width: 100%; height: 300px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; font-family: var(--mono);
+    font-size: 11px; padding: 9px; resize: vertical;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  body.stale .essentials, body.stale main { opacity: .45; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="file-row">
+    <span class="fname" id="fname">—</span>
+    <span class="chip" id="state">idle</span>
+    <span class="chip" id="speed" hidden>1.00×</span>
+  </div>
+  <div class="controls">
+    <div class="group">
+      <button class="mono wide" id="b-start" title="Go to start">⏮</button>
+      <button class="mono wide" id="b-prev" title="Previous frame (⌥⇧←)">◀▐</button>
+      <button class="primary" id="b-pause" title="Play / Pause">⏯</button>
+      <button class="mono wide" id="b-next" title="Next frame (⌥⇧→)">▐▶</button>
+      <button class="mono wide" id="b-end" title="Go to end">⏭</button>
+    </div>
+    <div class="group">
+      <button class="mono" id="b-m10" title="Back 10 seconds">−10s</button>
+      <button class="mono" id="b-m1" title="Back 1 second">−1s</button>
+      <button class="mono" id="b-p1" title="Forward 1 second">+1s</button>
+      <button class="mono" id="b-p10" title="Forward 10 seconds">+10s</button>
+    </div>
+    <button class="mono wide" id="b-shot" title="Exact-frame screenshot (⌥⇧S)">◉</button>
+    <div class="jump">
+      <input id="jump" type="text" placeholder="jump to 01:23:45;12  or  #12345" spellcheck="false" />
+      <button id="b-jump">Go</button>
+    </div>
+    <button id="b-gear">Panels ▾</button>
+    <button id="b-copy">Copy report</button>
+  </div>
+</div>
+
+<div id="drawer"></div>
+
+<div class="essentials">
+  <div class="ess-tc" id="ess-tc">--:--:--:--</div>
+  <div class="ess-frame" id="ess-frame">frame —</div>
+  <div class="ess-meta" id="ess-meta"></div>
+</div>
+
+<main id="main"></main>
+
+<dialog id="report">
+  <textarea id="report-text" readonly></textarea>
+  <div style="display:flex; gap:6px; margin-top:9px; justify-content:flex-end">
+    <button id="report-copy">Copy to clipboard</button>
+    <button id="report-close">Close</button>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  "use strict";
+  var iina = window.iina;
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+
+  /* ============================================================ formatting */
+  function fmt(v, d) { return (v == null || !isFinite(v)) ? "—" : Number(v).toFixed(d == null ? 2 : d); }
+  function fmtInt(v) { return (v == null || !isFinite(v)) ? "—" : String(Math.round(v)); }
+  function orDash(v) { return (v == null || v === "") ? "—" : String(v); }
+  function bytes(n) {
+    if (n == null || !isFinite(n)) return "—";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return n.toFixed(i ? 2 : 0) + " " + u[i];
+  }
+  function bitrate(n) {
+    if (n == null || !isFinite(n) || n <= 0) return "—";
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + " Mb/s";
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + " kb/s";
+    return n.toFixed(0) + " b/s";
+  }
+  function clock(s) {
+    if (s == null || !isFinite(s)) return "—";
+    var neg = s < 0; s = Math.abs(s);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return (neg ? "-" : "") + (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + sec.toFixed(3).padStart(6, "0");
+  }
+  function parseDb(v) {
+    if (v == null) return -Infinity;
+    if (typeof v === "string" && (v.indexOf("inf") >= 0 || v === "nan")) return -Infinity;
+    var n = parseFloat(v);
+    return isFinite(n) ? n : -Infinity;
+  }
+  function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+
+  /* ============================================================ ring buffer */
+  function Ring(len) { this.len = len; this.buf = []; }
+  Ring.prototype.push = function (v) { this.buf.push(v); while (this.buf.length > this.len) this.buf.shift(); };
+  Ring.prototype.clear = function () { this.buf.length = 0; };
+
+  var sparks = { avsync: new Ring(220), bitrate: new Ring(220), momentary: new Ring(220) };
+
+  /* ============================================================ waveform buffer */
+  var wave = {
+    cols: [],          // { mn:[], mx:[], rms:[], clip:bool }
+    max: 320,
+    chNames: [],
+    lastSig: "",
+    mono: false,
+    seconds: 6,
+  };
+  function pushWaveColumn(raw) {
+    if (!raw) return;
+    // discover channels
+    var chs = [];
+    Object.keys(raw).forEach(function (k) {
+      var m = k.match(/^lavfi\.astats\.(\d+)\.Max_level$/);
+      if (m) chs.push(parseInt(m[1], 10));
+    });
+    chs.sort(function (a, b) { return a - b; });
+    if (!chs.length) return;
+
+    var sig = chs.map(function (c) {
+      return raw["lavfi.astats." + c + ".Max_level"] + "/" + raw["lavfi.astats." + c + ".RMS_level"];
+    }).join("|");
+    if (sig === wave.lastSig) return;  // paused / no new analysis frame
+    wave.lastSig = sig;
+
+    var col = { mn: [], mx: [], rms: [], clip: false };
+    chs.forEach(function (c) {
+      var mn = num(raw["lavfi.astats." + c + ".Min_level"]);
+      var mx = num(raw["lavfi.astats." + c + ".Max_level"]);
+      var rdb = parseDb(raw["lavfi.astats." + c + ".RMS_level"]);
+      var r = isFinite(rdb) ? Math.pow(10, rdb / 20) : 0;
+      if (mn == null) mn = 0; if (mx == null) mx = 0;
+      if (Math.max(Math.abs(mn), Math.abs(mx)) >= 0.999) col.clip = true;
+      col.mn.push(mn); col.mx.push(mx); col.rms.push(r);
+    });
+    wave.chNames = chs.map(function (c) { return "ch" + c; });
+    wave.cols.push(col);
+    while (wave.cols.length > wave.max) wave.cols.shift();
+  }
+  function clearWave() { wave.cols.length = 0; wave.lastSig = ""; }
+
+  function drawWave(canvas) {
+    var dpr = window.devicePixelRatio || 1;
+    var nCh = wave.chNames.length || 1;
+    var laneH = 46;
+    var cssH = Math.max(laneH, nCh * laneH);
+    if (canvas.style.height !== cssH + "px") canvas.style.height = cssH + "px";
+    var w = canvas.clientWidth, h = cssH;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    }
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var css = getComputedStyle(document.documentElement);
+    var cAcc = css.getPropertyValue("--accent").trim();
+    var cBad = css.getPropertyValue("--bad").trim();
+    var cDim = css.getPropertyValue("--faint").trim();
+    var cGrid = "rgba(140,146,160,.18)";
+    ctx.clearRect(0, 0, w, h);
+
+    var cols = wave.cols;
+    var groups = wave.mono ? 1 : nCh;
+    var gH = h / groups;
+    var colW = Math.max(1, w / wave.max);
+    var x0 = w - cols.length * colW;
+
+    for (var g = 0; g < groups; g++) {
+      var midY = g * gH + gH / 2;
+      // zero line + lane separator
+      ctx.strokeStyle = cGrid;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(w, midY); ctx.stroke();
+      if (g > 0) { ctx.beginPath(); ctx.moveTo(0, g * gH); ctx.lineTo(w, g * gH); ctx.stroke(); }
+      ctx.fillStyle = cDim; ctx.font = "9px " + css.getPropertyValue("--mono");
+      ctx.fillText(wave.mono ? "sum" : (wave.chNames[g] || "ch"), 4, g * gH + 11);
+
+      for (var i = 0; i < cols.length; i++) {
+        var c = cols[i];
+        var mn, mx, rms;
+        if (wave.mono) {
+          mn = Math.min.apply(null, c.mn); mx = Math.max.apply(null, c.mx);
+          rms = c.rms.reduce(function (a, b) { return a + b; }, 0) / c.rms.length;
+        } else { mn = c.mn[g]; mx = c.mx[g]; rms = c.rms[g]; }
+        var x = x0 + i * colW;
+        var yTop = midY - mx * (gH * 0.46);
+        var yBot = midY - mn * (gH * 0.46);
+        ctx.fillStyle = c.clip ? cBad : cAcc;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(x, yTop, Math.max(1, colW - 0.3), Math.max(1, yBot - yTop));
+        // rms band
+        ctx.globalAlpha = 1;
+        var yR1 = midY - rms * (gH * 0.46), yR2 = midY + rms * (gH * 0.46);
+        ctx.fillStyle = c.clip ? cBad : cAcc;
+        ctx.fillRect(x, yR1, Math.max(1, colW - 0.3), Math.max(1, yR2 - yR1));
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* ============================================================ sparkline */
+  function drawSpark(canvas, ring, opts) {
+    opts = opts || {};
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    var b = ring.buf;
+    var vals = b.filter(function (x) { return x != null && isFinite(x); });
+    if (vals.length < 2) return;
+    var lo = opts.min != null ? opts.min : Math.min.apply(null, vals);
+    var hi = opts.max != null ? opts.max : Math.max.apply(null, vals);
+    if (opts.min == null) lo -= (hi - lo) * 0.1 || 1;
+    if (opts.max == null) hi += (hi - lo) * 0.1 || 1;
+    if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+    var pad = 3;
+    function X(i) { return pad + (w - 2 * pad) * (i / (ring.len - 1)); }
+    function Y(v) { return h - pad - (h - 2 * pad) * ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)); }
+    if (opts.zero != null && opts.zero >= lo && opts.zero <= hi) {
+      ctx.strokeStyle = "rgba(150,150,160,.35)";
+      ctx.beginPath(); ctx.moveTo(0, Y(opts.zero)); ctx.lineTo(w, Y(opts.zero)); ctx.stroke();
+    }
+    var start = ring.len - b.length;
+    ctx.strokeStyle = opts.color || "#56a8ff";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    var started = false;
+    for (var i = 0; i < b.length; i++) {
+      if (b[i] == null || !isFinite(b[i])) { started = false; continue; }
+      var px = X(start + i), py = Y(b[i]);
+      if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  /* ============================================================ meter model */
+  var meterModel = {};
+  function updateMeterModel(raw) {
+    if (!raw) return;
+    var now = performance.now();
+    Object.keys(raw).forEach(function (k) {
+      var m = k.match(/^lavfi\.astats\.(\d+)\.(RMS|Peak)_level$/);
+      if (!m) return;
+      var ch = parseInt(m[1], 10);
+      if (!meterModel[ch]) meterModel[ch] = { rms: -100, peak: -100, hold: -100, holdAt: 0, rmsT: -100, peakT: -100 };
+      var db = parseDb(raw[k]);
+      if (m[2] === "RMS") meterModel[ch].rmsT = db;
+      else {
+        meterModel[ch].peakT = db;
+        if (db > meterModel[ch].hold) { meterModel[ch].hold = db; meterModel[ch].holdAt = now; }
+      }
+    });
+  }
+  function animateMeters(dt, now) {
+    Object.keys(meterModel).forEach(function (ch) {
+      var m = meterModel[ch];
+      m.rms += (m.rmsT - m.rms) * Math.min(1, dt * (m.rmsT > m.rms ? 24 : 10));
+      m.peak += (m.peakT - m.peak) * Math.min(1, dt * (m.peakT > m.peak ? 34 : 7));
+      if (now - m.holdAt > 1500) m.hold -= 14 * dt;
+      if (m.hold < m.peak) m.hold = m.peak;
+    });
+  }
+
+  /* ============================================================ KV panel factory */
+  function KV(title, labels) {
+    var p = el("div", "panel");
+    var h = el("h2");
+    var tt = el("span", null, title);
+    var tag = el("span", "tag");
+    h.appendChild(tt); h.appendChild(tag);
+    p.appendChild(h);
+    var body = el("div", "body");
+    var dl = el("dl", "kv");
+    var cells = {};
+    labels.forEach(function (lb) {
+      var dt = el("dt", null, lb);
+      var dd = el("dd", null, "—");
+      dl.appendChild(dt); dl.appendChild(dd);
+      cells[lb] = { dt: dt, dd: dd };
+    });
+    body.appendChild(dl);
+    p.appendChild(body);
+    return {
+      el: p, body: body, tag: tag, cells: cells,
+      set: function (lb, val, cls) {
+        var c = cells[lb]; if (!c) return;
+        c.dd.textContent = (val == null || val === "") ? "—" : String(val);
+        c.dd.className = cls || "";
+      },
+      row: function (lb, show) { var c = cells[lb]; if (c) { c.dt.hidden = !show; c.dd.hidden = !show; } },
+    };
+  }
+
+  /* ============================================================ panels */
+  var P = {};
+
+  // -- Timecode --------------------------------------------------------------
+  P.timecode = (function () {
+    var k = KV("Timecode & Frames", ["Timecode (NDF)", "Timecode (DF)", "Position", "Duration", "Remaining", "Progress", "FPS", "FPS source"]);
+    return { key: "timecode", title: "Timecode & Frames", def: true, el: k.el,
+      update: function (d) {
+        var t = d.time;
+        k.tag.textContent = t.dropFrame ? "drop-frame" : "non-drop";
+        k.set("Timecode (NDF)", t.timecodeNDF, "hl");
+        k.set("Timecode (DF)", t.dropFrame ? t.timecode : "—", t.dropFrame ? "hl" : "dim");
+        k.set("Position", clock(t.pos));
+        k.set("Duration", clock(t.duration));
+        k.set("Remaining", clock(t.remaining));
+        k.set("Progress", t.percent != null ? fmt(t.percent, 1) + " %" : "—");
+        k.set("FPS", t.fps != null ? fmt(t.fps, 6) : "—", "hl");
+        k.set("FPS source", orDash(t.fpsSource), t.fpsSource === "container" ? "" : "warn");
+      } };
+  })();
+
+  // -- Frame metadata ------------------------------------------------------
+  P.frame = (function () {
+    var k = KV("Frame Metadata", ["Picture type", "Keyframe", "Scan", "Field order", "Repeat flag", "GOP timecode", "Stream SMPTE TC"]);
+    return { key: "frame", title: "Frame Metadata", def: true, el: k.el,
+      update: function (d) {
+        var fi = d.frameInfo;
+        var pt = fi.pictureType ? String(fi.pictureType).toUpperCase() : null;
+        k.tag.textContent = pt || "";
+        k.tag.className = "tag badge" + (pt ? " " + pt[0] : "");
+        k.set("Picture type", pt || "—", pt === "I" ? "good" : (pt === "B" ? "warn" : (pt ? "hl" : "")));
+        k.set("Keyframe", fi.keyFrame == null ? "—" : (fi.keyFrame ? "yes" : "no"));
+        k.set("Scan", fi.interlaced == null ? "—" : (fi.interlaced ? "interlaced" : "progressive"), fi.interlaced ? "warn" : (fi.interlaced === false ? "good" : ""));
+        k.set("Field order", fi.interlaced ? (fi.tff ? "top field first" : "bottom field first") : "—");
+        k.row("Field order", !!fi.interlaced);
+        k.set("Repeat flag", fi.repeat == null ? "—" : String(fi.repeat), fi.repeat ? "warn" : "");
+        k.set("GOP timecode", orDash(fi.gopTimecode));
+        k.row("GOP timecode", !!fi.gopTimecode);
+        k.set("Stream SMPTE TC", orDash(fi.smpteTimecode || fi.estimatedSmpte), "hl");
+        k.row("Stream SMPTE TC", !!(fi.smpteTimecode || fi.estimatedSmpte));
+      } };
+  })();
+
+  // -- Video signal ------------------------------------------------------
+  P.signal = (function () {
+    var k = KV("Video Signal / Color", ["Coded size", "Display size", "Aspect (DAR)", "Pixel aspect", "Pixel format",
+      "Chroma", "Bit depth", "Chroma siting", "Color range", "Color matrix", "Primaries", "Transfer", "Signal peak", "Rotation", "3D / alpha"]);
+    return { key: "signal", title: "Video Signal / Color", def: true, el: k.el,
+      update: function (d) {
+        var v = d.video;
+        var chroma = v.pixelformat ? (/444/.test(v.pixelformat) ? "4:4:4" : /422/.test(v.pixelformat) ? "4:2:2" :
+          /420/.test(v.pixelformat) ? "4:2:0" : /gray/.test(v.pixelformat) ? "monochrome" : "?") : "—";
+        var bd = "—";
+        if (v.pixelformat) {
+          var mm = v.pixelformat.match(/p(\d+)(le|be)?$/) || v.pixelformat.match(/(10|12|14|16)/);
+          bd = mm ? mm[1] + "-bit" : "8-bit";
+        }
+        var hdr = v.gamma && /pq|hlg|st2084|smpte2084|arib/i.test(v.gamma);
+        k.tag.textContent = (v.w && v.h) ? v.w + "×" + v.h : "";
+        k.tag.className = "tag";
+        k.set("Coded size", (v.w && v.h) ? v.w + " × " + v.h : "—", "hl");
+        k.set("Display size", (v.dw && v.dh) ? v.dw + " × " + v.dh : "—");
+        k.set("Aspect (DAR)", orDash(v.aspectName || (v.aspect != null ? fmt(v.aspect, 3) : null)));
+        k.set("Pixel aspect", v.par != null ? fmt(v.par, 4) : "—", (v.par != null && Math.abs(v.par - 1) > 0.001) ? "warn" : "");
+        k.set("Pixel format", orDash(v.pixelformat));
+        k.set("Chroma", chroma);
+        k.set("Bit depth", bd, (bd !== "8-bit" && bd !== "—") ? "hl" : "");
+        k.set("Chroma siting", orDash(v.chromaLocation));
+        k.set("Color range", orDash(v.colorlevels), v.colorlevels === "full" ? "warn" : "");
+        k.set("Color matrix", orDash(v.colormatrix));
+        k.set("Primaries", orDash(v.primaries));
+        k.set("Transfer", orDash(v.gamma), hdr ? "hl" : "");
+        k.set("Signal peak", v.sigPeak != null ? fmt(v.sigPeak, 3) : "—", hdr ? "hl" : "");
+        k.row("Signal peak", !!hdr);
+        k.set("Rotation", v.rotate != null ? v.rotate + "°" : "0°", v.rotate ? "warn" : "");
+        var td = [];
+        if (v.stereoIn && v.stereoIn !== "mono") td.push("3D " + v.stereoIn);
+        if (v.alpha && v.alpha !== "no") td.push("alpha " + v.alpha);
+        k.set("3D / alpha", td.length ? td.join(" · ") : "—", td.length ? "warn" : "dim");
+        k.row("3D / alpha", td.length > 0);
+      } };
+  })();
+
+  // -- Codec & bitrate ------------------------------------------------------
+  P.codec = (function () {
+    var k = KV("Codec & Bitrate", ["Container", "File size", "Video codec", "Video decoder", "Hardware decode", "Video bitrate", "Audio codec", "Audio bitrate"]);
+    var cap = el("div", "cap", "video bitrate (Mb/s)");
+    var cv = el("canvas", "spark"); cv.id = "sp-bitrate";
+    k.body.appendChild(cap); k.body.appendChild(cv);
+    return { key: "codec", title: "Codec & Bitrate", def: true, el: k.el, canvas: cv,
+      update: function (d) {
+        var v = d.video, a = d.audio, f = d.file;
+        k.set("Container", orDash(f.format));
+        k.set("File size", bytes(f.size));
+        k.set("Video codec", orDash(v.codec));
+        k.set("Video decoder", orDash(v.decoder));
+        k.set("Hardware decode", orDash(v.hwdec), (v.hwdec && v.hwdec !== "no") ? "good" : "dim");
+        k.set("Video bitrate", bitrate(v.bitrate), "hl");
+        k.set("Audio codec", orDash(a.codec));
+        k.set("Audio bitrate", bitrate(a.bitrate));
+      },
+      tick: function () { drawSpark(cv, sparks.bitrate, { color: "#56a8ff", min: 0 }); } };
+  })();
+
+  // -- Sync & dropped frames ------------------------------------------------------
+  P.sync = (function () {
+    var k = KV("A/V Sync & Dropped Frames", ["A/V sync", "Dropped (decoder)", "Dropped (output)", "Mistimed frames", "Delayed frames", "Display refresh", "Est. filtered fps", "Demux cache"]);
+    var cap = el("div", "cap", "A/V sync history — centre line = locked");
+    var cv = el("canvas", "spark"); cv.id = "sp-avsync";
+    k.body.appendChild(cap); k.body.appendChild(cv);
+    return { key: "sync", title: "A/V Sync & Dropped Frames", def: true, el: k.el, canvas: cv,
+      update: function (d) {
+        var pf = d.perf;
+        var av = pf.avsync, aa = av != null ? Math.abs(av) : null;
+        k.tag.textContent = aa == null ? "" : ((av > 0 ? "+" : "") + fmt(av * 1000, 0) + " ms");
+        k.set("A/V sync", av != null ? (av > 0 ? "+" : "") + fmt(av * 1000, 1) + " ms" : "—",
+          aa == null ? "" : (aa > 0.1 ? "bad" : aa > 0.04 ? "warn" : "good"));
+        k.set("Dropped (decoder)", fmtInt(pf.decDrop), pf.decDrop ? "bad" : "");
+        k.set("Dropped (output)", fmtInt(pf.voDrop), pf.voDrop ? "bad" : "");
+        k.set("Mistimed frames", fmtInt(pf.mistimed), pf.mistimed ? "warn" : "");
+        k.set("Delayed frames", fmtInt(pf.delayed), pf.delayed ? "warn" : "");
+        k.set("Display refresh", pf.displayFps != null ? fmt(pf.displayFps, 3) + " Hz" : "—");
+        k.set("Est. filtered fps", pf.estVfFps != null ? fmt(pf.estVfFps, 3) : "—");
+        k.set("Demux cache", pf.cacheDuration != null ? fmt(pf.cacheDuration, 1) + " s" : "—", pf.cacheUnderrun ? "bad" : "");
+      },
+      tick: function () { drawSpark(cv, sparks.avsync, { zero: 0, color: "#56a8ff", min: -0.15, max: 0.15 }); } };
+  })();
+
+  // -- Waveform ------------------------------------------------------
+  P.waveform = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "Audio Waveform"));
+    var ctrl = el("span", "seg");
+    var monoLab = el("label", null); var monoCb = el("input"); monoCb.type = "checkbox";
+    monoLab.appendChild(monoCb); monoLab.appendChild(document.createTextNode(" sum"));
+    monoLab.style.cssText = "display:flex;gap:4px;align-items:center;color:var(--dim);cursor:pointer";
+    ctrl.appendChild(monoLab);
+    h.appendChild(ctrl);
+    p.appendChild(h);
+    var body = el("div", "body");
+    var cv = el("canvas", "wave"); cv.id = "wave";
+    body.appendChild(cv);
+    var note = el("div", "hint", "translucent = min/max envelope · solid = RMS");
+    body.appendChild(note);
+    p.appendChild(body);
+    monoCb.addEventListener("change", function () { wave.mono = monoCb.checked; });
+    return { key: "waveform", title: "Audio Waveform", def: true, el: p, canvas: cv, note: note,
+      update: function (d) {
+        if (!d.meter.active) note.textContent = d.meter.wanted ? "starting analysis filter…" : "enable to insert the analysis filter";
+        else if (!wave.cols.length) note.textContent = "waiting for audio — play the file";
+        else note.textContent = "translucent = min/max envelope · solid = RMS";
+        note.className = "hint";
+      },
+      tick: function () { drawWave(cv); } };
+  })();
+
+  // -- Audio levels ------------------------------------------------------
+  P.levels = (function () {
+    var p = el("div", "panel");
+    var h = el("h2"); h.appendChild(el("span", null, "Audio Levels")); var tag = el("span", "tag"); h.appendChild(tag);
+    p.appendChild(h);
+    var body = el("div", "body");
+    var wrap = el("div", "meter-wrap");
+    var scale = el("div", "scale");
+    ["0", "-6", "-12", "-20", "-40", "-60"].forEach(function (s) { scale.appendChild(el("div", null, s)); });
+    var meters = el("div", "meters");
+    wrap.appendChild(scale); wrap.appendChild(meters);
+    body.appendChild(wrap);
+    var note = el("div", "hint", "");
+    body.appendChild(note);
+    p.appendChild(body);
+    var built = 0;
+    var MIN = -60, MAX = 0;
+    function pct(db) { return Math.max(0, Math.min(1, (db - MIN) / (MAX - MIN))) * 100; }
+    return { key: "levels", title: "Audio Levels", def: true, el: p, tag: tag, note: note,
+      update: function (d) {
+        tag.textContent = d.meter.active ? "dBFS" : (d.meter.wanted ? "starting…" : "off");
+        var chs = Object.keys(meterModel).map(Number).sort(function (a, b) { return a - b; });
+        if (chs.length !== built) {
+          meters.innerHTML = ""; built = chs.length;
+          chs.forEach(function (ch) {
+            var col = el("div", "meter-col"); col.dataset.ch = ch;
+            var track = el("div", "meter-track");
+            track.appendChild(el("div", "meter-fill"));
+            track.appendChild(el("div", "meter-peak"));
+            track.appendChild(el("div", "meter-hold"));
+            col.appendChild(track);
+            col.appendChild(el("div", "meter-val", "-∞"));
+            col.appendChild(el("div", "meter-label", "ch" + ch));
+            meters.appendChild(col);
+          });
+        }
+        if (!chs.length) { note.textContent = d.meter.wanted ? "waiting for audio — play the file" : "enable to insert the analysis filter"; note.className = "hint"; }
+        else {
+          var clip = chs.some(function (c) { return meterModel[c].peak > -0.1; });
+          note.textContent = clip ? "⚠ peak ≥ 0 dBFS — clipping" : "bar = RMS · white tick = peak · red tick = peak-hold";
+          note.className = clip ? "hint bad" : "hint";
+        }
+      },
+      tick: function () {
+        meters.querySelectorAll(".meter-col").forEach(function (col) {
+          var m = meterModel[+col.dataset.ch]; if (!m) return;
+          col.querySelector(".meter-fill").style.height = pct(m.rms) + "%";
+          col.querySelector(".meter-peak").style.bottom = pct(m.peak) + "%";
+          col.querySelector(".meter-hold").style.bottom = pct(m.hold) + "%";
+          var v = col.querySelector(".meter-val");
+          v.textContent = m.peak <= MIN ? "-∞" : m.peak.toFixed(1);
+          v.className = "meter-val" + (m.peak > -0.1 ? " clip" : "");
+        });
+      } };
+  })();
+
+  // -- EBU R128 ------------------------------------------------------
+  P.loudness = (function () {
+    var k = KV("EBU R128 Loudness", ["Momentary (M)", "Short-term (S)", "Integrated (I)", "Loudness range", "True peak", "Target"]);
+    var cap = el("div", "cap", "momentary loudness (LUFS)");
+    var cv = el("canvas", "spark"); cv.id = "sp-mom";
+    k.body.appendChild(cap); k.body.appendChild(cv);
+    return { key: "loudness", title: "EBU R128 Loudness", def: false, el: k.el, canvas: cv,
+      update: function (d) {
+        var r = d.meter.raw || {};
+        var M = num(r["lavfi.r128.M"]), S = num(r["lavfi.r128.S"]), I = num(r["lavfi.r128.I"]), LRA = num(r["lavfi.r128.LRA"]);
+        var tp = -Infinity;
+        Object.keys(r).forEach(function (key) {
+          if (/^lavfi\.r128\.true_peaks?(_ch\d+)?$/.test(key)) { var n = parseFloat(r[key]); if (isFinite(n)) tp = Math.max(tp, n); }
+        });
+        k.tag.textContent = I != null ? fmt(I, 1) + " LUFS" : "";
+        k.set("Momentary (M)", M != null ? fmt(M, 1) + " LUFS" : "—");
+        k.set("Short-term (S)", S != null ? fmt(S, 1) + " LUFS" : "—");
+        k.set("Integrated (I)", I != null ? fmt(I, 1) + " LUFS" : "—", "hl");
+        k.set("Loudness range", LRA != null ? fmt(LRA, 1) + " LU" : "—");
+        k.set("True peak", isFinite(tp) ? fmt(tp, 1) + " dBTP" : "—", (isFinite(tp) && tp > -1) ? "bad" : "");
+        k.set("Target", "-23 LUFS EBU · -24 ATSC", "dim");
+      },
+      tick: function () { drawSpark(cv, sparks.momentary, { zero: -23, color: "#ffc94d" }); } };
+  })();
+
+  // -- Audio format ------------------------------------------------------
+  P.audiofmt = (function () {
+    var k = KV("Audio Format", ["Sample rate", "Channels", "Layout", "Sample format", "Codec", "Track title", "Track language"]);
+    return { key: "audiofmt", title: "Audio Format", def: false, el: k.el,
+      update: function (d) {
+        var a = d.audio;
+        k.set("Sample rate", a.sampleRate != null ? (a.sampleRate / 1000).toFixed(1) + " kHz" : "—");
+        k.set("Channels", a.channelCount != null ? String(a.channelCount) : "—");
+        k.set("Layout", orDash(a.hrChannels || a.channels));
+        k.set("Sample format", orDash(a.format));
+        k.set("Codec", orDash(a.codec));
+        k.set("Track title", orDash(a.trackTitle));
+        k.set("Track language", orDash(a.trackLang));
+      } };
+  })();
+
+  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
+  var state = { panels: {}, data: null };
+  ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
+
+  /* ============================================================ mount */
+  var mainEl = $("main");
+  ORDER.forEach(function (kk) { mainEl.appendChild(P[kk].el); });
+
+  function applyVisibility() {
+    ORDER.forEach(function (kk) { P[kk].el.hidden = !state.panels[kk]; });
+  }
+
+  function buildDrawer() {
+    var dr = $("drawer");
+    dr.innerHTML = "";
+    ORDER.forEach(function (kk) {
+      var lab = el("label");
+      var cb = el("input"); cb.type = "checkbox"; cb.checked = !!state.panels[kk];
+      cb.addEventListener("change", function () {
+        state.panels[kk] = cb.checked;
+        applyVisibility(); pushConfig();
+        if (state.data) applyData();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(P[kk].title));
+      dr.appendChild(lab);
+    });
+  }
+
+  function pushConfig() { iina.postMessage("iinfo-config", { panels: state.panels, wave: { mono: wave.mono } }); }
+  function applyConfig(cfg) {
+    if (cfg && cfg.panels) ORDER.forEach(function (kk) { if (kk in cfg.panels) state.panels[kk] = !!cfg.panels[kk]; });
+    if (cfg && cfg.wave && typeof cfg.wave.mono === "boolean") wave.mono = cfg.wave.mono;
+    buildDrawer(); applyVisibility();
+    if (state.data) applyData();
+  }
+
+  /* ============================================================ data in */
+  function applyData() {
+    var d = state.data; if (!d) return;
+
+    // essentials
+    var t = d.time;
+    var tc = (t.dropFrame ? t.timecode : t.timecodeNDF) || "--:--:--:--";
+    var etc = $("ess-tc"); etc.innerHTML = "";
+    tc.split(/([:;])/).forEach(function (part) {
+      if (part === ":" || part === ";") etc.appendChild(el("span", "sep", part));
+      else etc.appendChild(document.createTextNode(part));
+    });
+    $("ess-frame").textContent = "frame " + fmtInt(t.frame) + (t.frameCount ? " / " + fmtInt(t.frameCount) : "");
+    var em = $("ess-meta"); em.innerHTML = "";
+    function mchip(txt, cls) { em.appendChild(el("span", "chip" + (cls ? " " + cls : ""), txt)); }
+    if (t.fps != null) mchip(fmt(t.fps, 3) + " fps");
+    if (d.perf.avsync != null) {
+      var a = d.perf.avsync, aa = Math.abs(a);
+      mchip("sync " + (a > 0 ? "+" : "") + fmt(a * 1000, 0) + "ms", aa > 0.1 ? "bad" : aa > 0.04 ? "warn" : "");
+    }
+    if (d.perf.decDrop || d.perf.voDrop) mchip("drop " + fmtInt(d.perf.decDrop) + "/" + fmtInt(d.perf.voDrop), "bad");
+    var pk = -Infinity;
+    Object.keys(meterModel).forEach(function (c) { pk = Math.max(pk, meterModel[c].peakT); });
+    if (isFinite(pk)) mchip("peak " + fmt(pk, 1) + " dBFS", pk > -0.1 ? "bad" : pk > -3 ? "warn" : "");
+
+    // header
+    $("fname").textContent = d.file.name || "—";
+    $("fname").title = d.file.path || "";
+    var st = $("state");
+    if (d.file.name == null) { st.textContent = "idle"; st.className = "chip"; }
+    else if (d.file.paused) { st.textContent = "PAUSED"; st.className = "chip paused"; }
+    else { st.textContent = "PLAYING"; st.className = "chip playing"; }
+    var sp = $("speed");
+    if (d.file.speed != null && Math.abs(d.file.speed - 1) > 0.001) { sp.hidden = false; sp.textContent = fmt(d.file.speed, 2) + "×"; }
+    else sp.hidden = true;
+
+    ORDER.forEach(function (kk) {
+      if (!state.panels[kk]) return;
+      try { P[kk].update(d); } catch (e) { /* keep other panels alive */ }
+    });
+  }
+
+  iina.onMessage("iinfo-config", function (msg) {
+    if (msg && msg.config) applyConfig(msg.config);
+    pushConfig();
+  });
+  var lastBeat = 0;
+  iina.onMessage("iinfo-data", function (d) {
+    state.data = d;
+    lastBeat = performance.now();
+    updateMeterModel(d.meter && d.meter.raw);
+    // advance sparklines + waveform only on genuinely new frames
+    if (d.video && d.video.bitrate != null) sparks.bitrate.push(d.video.bitrate / 1e6);
+    if (d.perf && d.perf.avsync != null) sparks.avsync.push(d.perf.avsync);
+    var r = d.meter && d.meter.raw;
+    if (r && r["lavfi.r128.M"] != null) sparks.momentary.push(parseFloat(r["lavfi.r128.M"]));
+    if (d.meter && d.meter.active && d.file && !d.file.paused) pushWaveColumn(r);
+    applyData();
+  });
+
+  /* ============================================================ loops */
+  setInterval(function () { iina.postMessage("iinfo-poll"); }, 33);       // ~30 Hz data
+  setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
+  window.addEventListener("pagehide", function () { try { iina.postMessage("iinfo-closing"); } catch (e) {} });
+
+  var prevT = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.1, (now - prevT) / 1000); prevT = now;
+    animateMeters(dt, now);
+    ORDER.forEach(function (kk) {
+      if (!state.panels[kk]) return;
+      var pn = P[kk];
+      if (pn.tick) { try { pn.tick(); } catch (e) {} }
+    });
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ============================================================ controls */
+  function act(type, value) { iina.postMessage("iinfo-action", { type: type, value: value }); }
+  $("b-start").addEventListener("click", function () { act("seek-start"); });
+  $("b-end").addEventListener("click", function () { act("seek-end"); });
+  $("b-prev").addEventListener("click", function () { act("frame-prev"); });
+  $("b-next").addEventListener("click", function () { act("frame-next"); });
+  $("b-pause").addEventListener("click", function () { act("toggle-pause"); });
+  $("b-shot").addEventListener("click", function () { act("screenshot"); });
+  $("b-m10").addEventListener("click", function () { act("nudge", -10); });
+  $("b-m1").addEventListener("click", function () { act("nudge", -1); });
+  $("b-p1").addEventListener("click", function () { act("nudge", 1); });
+  $("b-p10").addEventListener("click", function () { act("nudge", 10); });
+  $("b-gear").addEventListener("click", function () { $("drawer").classList.toggle("open"); });
+
+  function doJump() {
+    var raw = $("jump").value.trim(); if (!raw) return;
+    var d = state.data, fps = d && d.time ? d.time.fps : null;
+    var m;
+    if ((m = raw.match(/^#?(\d+(\.\d+)?)$/)) && fps) { act("seek-abs", parseFloat(m[1]) / fps); return; }
+    // hh:mm:ss[:;.]ff|ms
+    m = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:[.,](\d+)|[:;](\d+))?$/);
+    if (m) {
+      var h = +(m[1] || 0), mi = +m[2], s = +m[3];
+      var sub = 0;
+      if (m[4] != null) sub = parseFloat("0." + m[4]);
+      else if (m[5] != null && fps) sub = (+m[5]) / fps;
+      act("seek-abs", h * 3600 + mi * 60 + s + sub);
+      return;
+    }
+    if ((m = raw.match(/^(\d+(\.\d+)?)s?$/))) { act("seek-abs", parseFloat(m[1])); }
+  }
+  $("b-jump").addEventListener("click", doJump);
+  $("jump").addEventListener("keydown", function (e) { if (e.key === "Enter") doJump(); });
+
+  /* report */
+  function buildReport() {
+    var d = state.data; if (!d) return "No data yet.";
+    var v = d.video, a = d.audio, pf = d.perf, r = d.meter.raw || {}, L = [];
+    L.push("IINfo QC report — " + new Date().toISOString());
+    L.push("File: " + orDash(d.file.path));
+    L.push("");
+    L.push("[Timecode] " + ((d.time.dropFrame ? d.time.timecode : d.time.timecodeNDF) || "—") +
+      "  frame " + fmtInt(d.time.frame) + " / " + fmtInt(d.time.frameCount));
+    L.push("  fps " + fmt(d.time.fps, 6) + " (" + orDash(d.time.fpsSource) + ")  " + (d.time.dropFrame ? "DROP-FRAME" : "non-drop"));
+    L.push("  position " + clock(d.time.pos) + " / " + clock(d.time.duration));
+    L.push("");
+    L.push("[Frame] type=" + orDash(d.frameInfo.pictureType) + " keyframe=" + d.frameInfo.keyFrame +
+      " interlaced=" + d.frameInfo.interlaced + " tff=" + d.frameInfo.tff + " repeat=" + d.frameInfo.repeat);
+    L.push("");
+    L.push("[Video] " + v.w + "x" + v.h + " coded / " + v.dw + "x" + v.dh + " display  PAR " + fmt(v.par, 4) + "  DAR " + orDash(v.aspectName));
+    L.push("  pixfmt=" + orDash(v.pixelformat) + " range=" + orDash(v.colorlevels) + " matrix=" + orDash(v.colormatrix));
+    L.push("  primaries=" + orDash(v.primaries) + " transfer=" + orDash(v.gamma) + " sig-peak=" + orDash(v.sigPeak) + " rotate=" + orDash(v.rotate));
+    L.push("  codec=" + orDash(v.codec) + " decoder=" + orDash(v.decoder) + " hwdec=" + orDash(v.hwdec) + " bitrate=" + bitrate(v.bitrate));
+    L.push("");
+    L.push("[Audio] " + orDash(a.codec) + "  " + orDash(a.sampleRate) + " Hz  " + orDash(a.channelCount) + "ch (" +
+      orDash(a.hrChannels || a.channels) + ")  " + orDash(a.format) + "  bitrate=" + bitrate(a.bitrate));
+    if (r["lavfi.r128.I"] != null)
+      L.push("  R128: I=" + r["lavfi.r128.I"] + " LUFS  S=" + r["lavfi.r128.S"] + "  M=" + r["lavfi.r128.M"] + "  LRA=" + r["lavfi.r128.LRA"] + "  TP=" + orDash(r["lavfi.r128.true_peak"]));
+    L.push("");
+    L.push("[Sync] avsync=" + fmt(pf.avsync * 1000, 1) + " ms  drop dec/out=" + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
+      "  mistimed=" + fmtInt(pf.mistimed) + "  delayed=" + fmtInt(pf.delayed));
+    L.push("  display=" + fmt(pf.displayFps, 3) + " Hz  est-vf-fps=" + fmt(pf.estVfFps, 3));
+    return L.join("\n");
+  }
+  $("b-copy").addEventListener("click", function () {
+    $("report-text").value = buildReport();
+    $("report").showModal(); $("report-text").select();
+  });
+  $("report-close").addEventListener("click", function () { $("report").close(); });
+  $("report-copy").addEventListener("click", function () {
+    $("report-text").select();
+    try { if (navigator.clipboard) navigator.clipboard.writeText($("report-text").value); else document.execCommand("copy"); }
+    catch (e) { try { document.execCommand("copy"); } catch (e2) {} }
+  });
+
+  buildDrawer(); applyVisibility();
+  iina.postMessage("iinfo-ready");
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "iinfo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time video QC inspector plugin for IINA",
+  "scripts": {
+    "link": "iina-plugin link .",
+    "unlink": "iina-plugin unlink .",
+    "pack": "iina-plugin pack ."
+  },
+  "devDependencies": {
+    "iina-plugin-definition": "^0.99.4"
+  }
+}
