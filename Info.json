@@ -1,7 +1,7 @@
 {
   "name": "IINfo",
   "identifier": "com.jakestebbings.iinfo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Real-time video QC inspector: timecode, frame metadata, signal/color info, A/V sync, dropped-frame counters, a scrolling audio waveform, and level + EBU R128 loudness meters in a separate window.",
   "author": {
     "name": "Jake Stebbings",
@@ -9,7 +9,7 @@
     "url": "https://github.com/ProductionVideo/IINfo"
   },
   "ghRepo": "ProductionVideo/IINfo",
-  "ghVersion": 1,
+  "ghVersion": 2,
   "entry": "main.js",
   "permissions": [
     "show-osd"

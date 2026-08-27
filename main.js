@@ -26,6 +26,7 @@ let afActive = false;      // is our audio filter currently in the chain?
 let afWanted = false;      // does the webview want metering right now?
 let lastConfig = null;     // last config object received from the webview (for persistence)
 let lastContact = 0;       // Date.now() of the last message from the webview
+let fileGen = 0;           // bumped on every file load; lets the webview reset its buffers
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -136,6 +137,7 @@ function collect() {
 
     /* transport / header */
     file: {
+      gen: fileGen,
       name: str("filename"),
       path: str("path"),
       format: str("file-format"),
@@ -330,10 +332,19 @@ menu.addItem(menu.item("IINfo: Previous Frame", () => { try { mpv.command("frame
 menu.addItem(menu.item("IINfo: Next Frame", () => { try { mpv.command("frame-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+RIGHT" }));
 menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }, { keyBinding: "Alt+Shift+s" }));
 
-// re-sync the metering filter on file change (mpv usually keeps runtime af
-// across files, but a manual af-clr elsewhere would drop it)
+// on every file change: bump the generation counter (webview resets its
+// waveform / meter / sparkline history) and rebuild the analysis filter from
+// scratch so ebur128's integrated loudness and astats stats don't carry over
+// from the previous clip, and so af-metadata stops returning stale values.
 event.on("iina.file-loaded", () => {
-  if (winOpen) ensureAudioFilter(afWanted);
+  fileGen++;
+  if (winOpen && afWanted) {
+    try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
+    afActive = false;
+    ensureAudioFilter(true);
+  } else if (winOpen) {
+    ensureAudioFilter(afWanted);
+  }
   if (winOpen) standaloneWindow.postMessage("iinfo-data", collect());
 });
 

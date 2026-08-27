@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>IINfo</title>
 <style>
-  :root {
+  /* dark is the default / fallback palette */
+  :root, :root[data-theme="dark"] {
     --bg: #14161b;
     --panel: #1d1f26;
     --panel-2: #262932;
@@ -17,17 +18,29 @@
     --good: #4ccb7d;
     --warn: #ffc94d;
     --bad: #ff5f5f;
+  }
+  :root[data-theme="light"] {
+    --bg: #eef0f3; --panel: #ffffff; --panel-2: #e9ebef; --border: #d3d6dd;
+    --text: #14171c; --dim: #545b68; --faint: #838996;
+    --accent: #1f6fe0; --good: #1a9e50; --warn: #b9770e; --bad: #d33232;
+  }
+  :root[data-theme="black"] {
+    --bg: #000000; --panel: #0b0c0e; --panel-2: #16171a; --border: #2a2c31;
+    --text: #f2f4f8; --dim: #9aa0ac; --faint: #6b7280;
+    --accent: #56a8ff; --good: #4ccb7d; --warn: #ffc94d; --bad: #ff5f5f;
+  }
+  :root[data-theme="highcontrast"] {
+    --bg: #000000; --panel: #000000; --panel-2: #101216; --border: #5b6472;
+    --text: #ffffff; --dim: #d6dae2; --faint: #9aa3b2;
+    --accent: #6fbaff; --good: #58e08c; --warn: #ffd35c; --bad: #ff7a7a;
+  }
+  :root {
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #eef0f3; --panel: #ffffff; --panel-2: #e9ebef; --border: #d3d6dd;
-      --text: #14171c; --dim: #545b68; --faint: #838996;
-    }
-  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
+  html { zoom: 1; }
   body {
     background: var(--bg); color: var(--text);
     font-family: var(--sans); font-size: 13px; line-height: 1.45;
@@ -147,12 +160,23 @@
   .badge.P { color: var(--warn); border-color: var(--warn); }
   .badge.B { color: var(--good); border-color: var(--good); }
 
-  /* panels drawer */
-  #drawer { display: none; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 9px 11px; flex-wrap: wrap; gap: 8px 16px; }
-  #drawer.open { display: flex; }
+  /* panels + display drawer */
+  #drawer { display: none; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 10px 11px; gap: 14px 22px; }
+  #drawer.open { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .drawer-group { display: flex; flex-direction: column; gap: 7px; min-width: 190px; }
+  .drawer-head { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+  .drawer-panels { display: flex; flex-wrap: wrap; gap: 6px 16px; max-width: 360px; }
   #drawer label { display: flex; align-items: center; gap: 6px; color: var(--dim); cursor: pointer; user-select: none; font-size: 12px; }
-  #drawer input, .seg input { accent-color: var(--accent); }
-  .seg { display: inline-flex; gap: 10px; align-items: center; font-size: 11px; color: var(--dim); }
+  #drawer input { accent-color: var(--accent); }
+  .set-row { justify-content: space-between; gap: 10px; }
+  .set-label { color: var(--dim); font-size: 12px; }
+  #drawer select {
+    font-family: var(--sans); font-size: 12px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 6px; max-width: 190px;
+  }
+  #drawer select:focus { outline: none; border-color: var(--accent); }
+  .drawer-note { font-size: 10px; color: var(--faint); }
 
   dialog {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
@@ -223,6 +247,10 @@
   var iina = window.iina;
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
 
   /* ============================================================ formatting */
   function fmt(v, d) { return (v == null || !isFinite(v)) ? "—" : Number(v).toFixed(d == null ? 2 : d); }
@@ -301,7 +329,7 @@
     wave.cols.push(col);
     while (wave.cols.length > wave.max) wave.cols.shift();
   }
-  function clearWave() { wave.cols.length = 0; wave.lastSig = ""; }
+  function clearWave() { wave.cols.length = 0; wave.lastSig = ""; wave.chNames = []; }
 
   function drawWave(canvas) {
     var dpr = window.devicePixelRatio || 1;
@@ -385,7 +413,7 @@
       ctx.beginPath(); ctx.moveTo(0, Y(opts.zero)); ctx.lineTo(w, Y(opts.zero)); ctx.stroke();
     }
     var start = ring.len - b.length;
-    ctx.strokeStyle = opts.color || "#56a8ff";
+    ctx.strokeStyle = opts.color || cssVar("--accent", "#56a8ff");
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     var started = false;
@@ -556,7 +584,7 @@
         k.set("Audio codec", orDash(a.codec));
         k.set("Audio bitrate", bitrate(a.bitrate));
       },
-      tick: function () { drawSpark(cv, sparks.bitrate, { color: "#56a8ff", min: 0 }); } };
+      tick: function () { drawSpark(cv, sparks.bitrate, { min: 0 }); } };
   })();
 
   // -- Sync & dropped frames ------------------------------------------------------
@@ -580,7 +608,7 @@
         k.set("Est. filtered fps", pf.estVfFps != null ? fmt(pf.estVfFps, 3) : "—");
         k.set("Demux cache", pf.cacheDuration != null ? fmt(pf.cacheDuration, 1) + " s" : "—", pf.cacheUnderrun ? "bad" : "");
       },
-      tick: function () { drawSpark(cv, sparks.avsync, { zero: 0, color: "#56a8ff", min: -0.15, max: 0.15 }); } };
+      tick: function () { drawSpark(cv, sparks.avsync, { zero: 0, min: -0.15, max: 0.15 }); } };
   })();
 
   // -- Waveform ------------------------------------------------------
@@ -690,7 +718,7 @@
         k.set("True peak", isFinite(tp) ? fmt(tp, 1) + " dBTP" : "—", (isFinite(tp) && tp > -1) ? "bad" : "");
         k.set("Target", "-23 LUFS EBU · -24 ATSC", "dim");
       },
-      tick: function () { drawSpark(cv, sparks.momentary, { zero: -23, color: "#ffc94d" }); } };
+      tick: function () { drawSpark(cv, sparks.momentary, { zero: -23, color: cssVar("--warn", "#ffc94d") }); } };
   })();
 
   // -- Audio format ------------------------------------------------------
@@ -710,8 +738,49 @@
   })();
 
   var ORDER = ["timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
-  var state = { panels: {}, data: null };
+
+  /* ---- display settings (persisted with the panel config) ---- */
+  var THEMES = [
+    ["auto", "Auto (follow macOS)"], ["dark", "Dark"], ["black", "Black (OLED)"],
+    ["light", "Light"], ["highcontrast", "High contrast"],
+  ];
+  var FONTS = [
+    ["", "System mono"],
+    ['"SF Mono", ui-monospace, Menlo, monospace', "SF Mono"],
+    ["Menlo, monospace", "Menlo"],
+    ["Monaco, monospace", "Monaco"],
+    ['"PT Mono", monospace', "PT Mono"],
+    ['"Andale Mono", monospace', "Andale Mono"],
+    ['"Courier New", Courier, monospace', "Courier"],
+    ['"JetBrains Mono", ui-monospace, monospace', "JetBrains Mono *"],
+    ['"IBM Plex Mono", ui-monospace, monospace', "IBM Plex Mono *"],
+  ];
+  var SIZES = [["0.85", "XS"], ["0.92", "Small"], ["1", "Normal"], ["1.1", "Large"], ["1.25", "XL"], ["1.45", "XXL"]];
+  var DEFAULT_MONO = "ui-monospace, \"SF Mono\", \"JetBrains Mono\", Menlo, Consolas, monospace";
+
+  var state = {
+    panels: {}, data: null, gen: null, resetAt: 0,
+    settings: { theme: "auto", monoFont: "", textSize: "1" },
+  };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
+
+  var mqLight = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+
+  function applySettings() {
+    var s = state.settings;
+    var theme = s.theme === "auto"
+      ? (mqLight && mqLight.matches ? "light" : "dark")
+      : s.theme;
+    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.style.setProperty("--mono", s.monoFont || DEFAULT_MONO);
+    var z = parseFloat(s.textSize) || 1;
+    document.documentElement.style.zoom = z;
+  }
+  if (mqLight) {
+    var onScheme = function () { if (state.settings.theme === "auto") applySettings(); };
+    if (mqLight.addEventListener) mqLight.addEventListener("change", onScheme);
+    else if (mqLight.addListener) mqLight.addListener(onScheme);
+  }
 
   /* ============================================================ mount */
   var mainEl = $("main");
@@ -721,9 +790,27 @@
     ORDER.forEach(function (kk) { P[kk].el.hidden = !state.panels[kk]; });
   }
 
+  function selectRow(labelText, pairs, current, onChange) {
+    var row = el("label", "set-row");
+    row.appendChild(el("span", "set-label", labelText));
+    var sel = el("select");
+    pairs.forEach(function (p) {
+      var o = el("option", null, p[1]); o.value = p[0];
+      if (p[0] === current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () { onChange(sel.value); });
+    row.appendChild(sel);
+    return row;
+  }
+
   function buildDrawer() {
     var dr = $("drawer");
     dr.innerHTML = "";
+
+    var pgroup = el("div", "drawer-group");
+    pgroup.appendChild(el("div", "drawer-head", "Panels"));
+    var pwrap = el("div", "drawer-panels");
     ORDER.forEach(function (kk) {
       var lab = el("label");
       var cb = el("input"); cb.type = "checkbox"; cb.checked = !!state.panels[kk];
@@ -734,14 +821,48 @@
       });
       lab.appendChild(cb);
       lab.appendChild(document.createTextNode(P[kk].title));
-      dr.appendChild(lab);
+      pwrap.appendChild(lab);
     });
+    pgroup.appendChild(pwrap);
+    dr.appendChild(pgroup);
+
+    var dgroup = el("div", "drawer-group");
+    dgroup.appendChild(el("div", "drawer-head", "Display"));
+    dgroup.appendChild(selectRow("Theme", THEMES, state.settings.theme, function (v) {
+      state.settings.theme = v; applySettings(); pushConfig();
+    }));
+    dgroup.appendChild(selectRow("Readout font", FONTS, state.settings.monoFont, function (v) {
+      state.settings.monoFont = v; applySettings(); pushConfig();
+    }));
+    dgroup.appendChild(selectRow("Text size", SIZES, state.settings.textSize, function (v) {
+      state.settings.textSize = v; applySettings(); pushConfig();
+    }));
+    var waveRow = el("label", "set-row");
+    var wcb = el("input"); wcb.type = "checkbox"; wcb.checked = !!wave.mono;
+    wcb.addEventListener("change", function () { wave.mono = wcb.checked; pushConfig(); });
+    waveRow.appendChild(wcb);
+    waveRow.appendChild(el("span", "set-label", "Sum waveform channels"));
+    dgroup.appendChild(waveRow);
+    dgroup.appendChild(el("div", "drawer-note", "* JetBrains / IBM Plex Mono only if installed on this Mac"));
+    dr.appendChild(dgroup);
   }
 
-  function pushConfig() { iina.postMessage("iinfo-config", { panels: state.panels, wave: { mono: wave.mono } }); }
+  function pushConfig() {
+    iina.postMessage("iinfo-config", {
+      panels: state.panels,
+      wave: { mono: wave.mono },
+      settings: state.settings,
+    });
+  }
   function applyConfig(cfg) {
     if (cfg && cfg.panels) ORDER.forEach(function (kk) { if (kk in cfg.panels) state.panels[kk] = !!cfg.panels[kk]; });
     if (cfg && cfg.wave && typeof cfg.wave.mono === "boolean") wave.mono = cfg.wave.mono;
+    if (cfg && cfg.settings) {
+      if (cfg.settings.theme) state.settings.theme = cfg.settings.theme;
+      if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
+      if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
+    }
+    applySettings();
     buildDrawer(); applyVisibility();
     if (state.data) applyData();
   }
@@ -790,19 +911,41 @@
 
   iina.onMessage("iinfo-config", function (msg) {
     if (msg && msg.config) applyConfig(msg.config);
+    else { applySettings(); }
     pushConfig();
   });
+  function resetForNewFile() {
+    clearWave();
+    meterModel = {};
+    sparks.avsync.clear();
+    sparks.bitrate.clear();
+    sparks.momentary.clear();
+    state.resetAt = performance.now();
+  }
+
   var lastBeat = 0;
   iina.onMessage("iinfo-data", function (d) {
+    var now = performance.now();
+    // a new clip -> drop all history so the waveform / meters / sparklines don't
+    // freeze on the previous file's last frame
+    if (d.file && d.file.gen !== state.gen) {
+      state.gen = d.file.gen;
+      resetForNewFile();
+    }
     state.data = d;
-    lastBeat = performance.now();
-    updateMeterModel(d.meter && d.meter.raw);
-    // advance sparklines + waveform only on genuinely new frames
-    if (d.video && d.video.bitrate != null) sparks.bitrate.push(d.video.bitrate / 1e6);
-    if (d.perf && d.perf.avsync != null) sparks.avsync.push(d.perf.avsync);
-    var r = d.meter && d.meter.raw;
-    if (r && r["lavfi.r128.M"] != null) sparks.momentary.push(parseFloat(r["lavfi.r128.M"]));
-    if (d.meter && d.meter.active && d.file && !d.file.paused) pushWaveColumn(r);
+    lastBeat = now;
+
+    // brief settle window: mpv can hand back the previous clip's af-metadata for
+    // a few ms right after a file change
+    var settled = now - state.resetAt > 300;
+    if (settled) {
+      updateMeterModel(d.meter && d.meter.raw);
+      if (d.video && d.video.bitrate != null) sparks.bitrate.push(d.video.bitrate / 1e6);
+      if (d.perf && d.perf.avsync != null) sparks.avsync.push(d.perf.avsync);
+      var r = d.meter && d.meter.raw;
+      if (r && r["lavfi.r128.M"] != null) sparks.momentary.push(parseFloat(r["lavfi.r128.M"]));
+      if (d.meter && d.meter.active && d.file && !d.file.paused) pushWaveColumn(r);
+    }
     applyData();
   });
 
@@ -899,7 +1042,7 @@
     catch (e) { try { document.execCommand("copy"); } catch (e2) {} }
   });
 
-  buildDrawer(); applyVisibility();
+  applySettings(); buildDrawer(); applyVisibility();
   iina.postMessage("iinfo-ready");
 })();
 </script>

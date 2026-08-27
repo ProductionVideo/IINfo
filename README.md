@@ -8,8 +8,9 @@ parameters, A/V-sync and dropped-frame counters, a scrolling audio waveform, and
 level + EBU R128 loudness meters.
 
 <p align="center">
-  <img src="docs/controls.png" alt="IINfo toolbar and essentials strip" width="420">
-  <img src="docs/panels.png" alt="IINfo waveform and level meters" width="420">
+  <img src="docs/controls.png" alt="IINfo toolbar and essentials strip" width="280">
+  <img src="docs/panels.png" alt="IINfo waveform and level meters" width="280">
+  <img src="docs/settings.png" alt="IINfo panels and display settings" width="280">
 </p>
 
 ## What it shows
@@ -34,7 +35,19 @@ Below it, every section is an independent toggle (**Panels ▾** button):
 
 The three audio panels share one labelled lavfi filter
 (`asetnsamples` → `astats` → `ebur128`) that is inserted only while at least one of
-them is enabled and removed when they're all off or the window closes.
+them is enabled and removed when they're all off or the window closes. It is rebuilt
+on every file change so `ebur128`'s integrated loudness never carries over between
+clips.
+
+### Display settings (Panels ▾)
+
+- **Theme** — Auto (follows macOS), Dark, Black (OLED), Light, High contrast
+- **Readout font** — the monospace face for all numeric readouts (System mono, SF Mono,
+  Menlo, Monaco, PT Mono, Andale Mono, Courier; JetBrains / IBM Plex Mono if installed)
+- **Text size** — XS … XXL
+- **Sum waveform channels** — one combined lane instead of one per channel
+
+All of these, plus which panels are open, persist across sessions via `iina.preferences`.
 
 ### Transport controls (top bar)
 - `⏮` / `⏭` — jump to start / end
@@ -83,9 +96,13 @@ Then: open a video ▸ **Plugin** menu ▸ **Toggle IINfo Inspector** (`⌥⇧I`
   sparklines); small ring buffers hold the history.
 - Audio analysis inserts a labelled filter at runtime:
   `af add @iinfo:lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]`.
-  It is removed when all three audio panels are off and when the window closes,
-  and re-checked on `iina.file-loaded`.
-- Panel visibility is persisted through `iina.preferences`.
+  It is removed when all three audio panels are off and when the window closes, and
+  fully rebuilt on `iina.file-loaded`.
+- Every data frame carries a `gen` counter that the plugin bumps on `iina.file-loaded`;
+  the web view drops its waveform / meter / sparkline history when it changes, so
+  nothing freezes on the previous clip's last frame.
+- Panel visibility and display settings are persisted through `iina.preferences`
+  (one JSON blob under the `config` key).
 
 ## Permissions
 
