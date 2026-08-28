@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- Reverted the HUD/vibrancy window — back to a solid opaque window while the
+  "inspector won't open" report is understood.
+- Hardened plugin load: `setupWindow`, menu registration, `event.on` and
+  `standaloneWindow.open` are each wrapped, so one failure can't stop the
+  "Toggle IINfo Inspector" menu item from appearing or the window from opening.
+- Startup / ready log lines for the IINA plugin console.
+
 ## 0.1.4
 
 - Web view split into `inspector.html` / `.css` / `.js`.

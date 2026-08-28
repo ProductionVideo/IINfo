@@ -12,6 +12,8 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
+console.log("IINfo: main entry loading (v0.1.5)");
+
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
 // of codec frame size, so the scrolling waveform advances at a steady rate.
@@ -307,15 +309,18 @@ function collect() {
 /* ------------------------------------------------------------ window setup */
 
 function setupWindow() {
-  standaloneWindow.loadFile("ui/inspector.html");
-  standaloneWindow.setProperty({
-    title: "IINfo",
-    resizable: true,
-    hudWindow: true,            // translucent / vibrancy, like IINA's own Inspector
-    fullSizeContentView: true,
-    hideTitleBar: false,
-  });
-  standaloneWindow.setFrame(440, 780);
+  try {
+    standaloneWindow.loadFile("ui/inspector.html");
+    standaloneWindow.setProperty({
+      title: "IINfo",
+      resizable: true,
+      hideTitleBar: false,
+      fullSizeContentView: false,
+    });
+    standaloneWindow.setFrame(440, 780);
+  } catch (e) {
+    console.log("IINfo: window setup warning — " + e);
+  }
 
   standaloneWindow.onMessage("iinfo-ready", () => {
     // webview mounted — restore its saved config, then it starts polling
@@ -383,7 +388,8 @@ function setupWindow() {
 }
 
 function openWindow() {
-  standaloneWindow.open();
+  try { standaloneWindow.open(); }
+  catch (e) { console.log("IINfo: standaloneWindow.open failed — " + e); core.osd("IINfo: could not open inspector window"); return; }
   winOpen = true;
   lastContact = Date.now();   // grace period until the webview starts polling
 }
@@ -403,30 +409,35 @@ try {
   if (saved) lastConfig = JSON.parse(saved);
 } catch (e) { lastConfig = null; }
 
-setupWindow();
+try { setupWindow(); } catch (e) { console.log("IINfo: setupWindow error — " + e); }
 
-menu.addItem(menu.item("Toggle IINfo Inspector", toggleWindow, { keyBinding: "Alt+Shift+i" }));
-menu.addItem(menu.separator());
-menu.addItem(menu.item("IINfo: Previous Frame", () => { try { mpv.command("frame-back-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+LEFT" }));
-menu.addItem(menu.item("IINfo: Next Frame", () => { try { mpv.command("frame-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+RIGHT" }));
-menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }, { keyBinding: "Alt+Shift+s" }));
+// register the menu first and defensively — a later failure must never keep the
+// "Toggle IINfo Inspector" item from appearing
+try {
+  menu.addItem(menu.item("Toggle IINfo Inspector", toggleWindow, { keyBinding: "Alt+Shift+i" }));
+  menu.addItem(menu.separator());
+  menu.addItem(menu.item("IINfo: Previous Frame", () => { try { mpv.command("frame-back-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+LEFT" }));
+  menu.addItem(menu.item("IINfo: Next Frame", () => { try { mpv.command("frame-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+RIGHT" }));
+  menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }, { keyBinding: "Alt+Shift+s" }));
+} catch (e) { console.log("IINfo: menu setup error — " + e); }
 
 // bump the generation counter on any file / audio change. tickFilter() (run
 // every poll) notices the new gen and reinstalls a fresh @iinfo instance, so
 // ebur128's integration and astats stats never carry across clips. The webview
 // also resets its waveform / meter / sparkline history when `gen` changes.
 let lastAudioSig = "";
-event.on("iina.file-loaded", () => {
+function on(ev, fn) { try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
+
+on("iina.file-loaded", () => {
   fileGen++;
   if (winOpen) standaloneWindow.postMessage("iinfo-data", collect());
 });
-event.on("mpv.audio-params.changed", () => {
+on("mpv.audio-params.changed", () => {
   const sig = JSON.stringify(native("audio-params") || {});
   if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
 });
-event.on("mpv.end-file", () => { freshGen = -1; });
-
-event.on("iina.window-will-close", () => {
+on("mpv.end-file", () => { freshGen = -1; });
+on("iina.window-will-close", () => {
   winOpen = false;
   if (filterPresent()) tryRemove();
 });
@@ -435,10 +446,12 @@ event.on("iina.window-will-close", () => {
 // stop believing it is open and drop the analysis filter so audio is untouched.
 // afWanted is left intact, so metering resumes by itself once polls come back.
 setInterval(() => {
-  if (winOpen && lastContact && Date.now() - lastContact > 2500) {
-    winOpen = false;
-    teardownFilter();
-  }
+  try {
+    if (winOpen && lastContact && Date.now() - lastContact > 2500) {
+      winOpen = false;
+      teardownFilter();
+    }
+  } catch (e) {}
 }, 1000);
 
-console.log("IINfo loaded — Plugin menu ▸ Toggle IINfo Inspector (⌥⇧I)");
+console.log("IINfo: main entry ready — Plugin menu ▸ Toggle IINfo Inspector (⌥⇧I)");

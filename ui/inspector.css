@@ -61,17 +61,11 @@ input, .cap, .meter-val, .meter-label {
 html, body { height: 100%; }
 html { zoom: 1; }
 body {
-  /* transparent so the HUD window's vibrancy shows through the chrome + gaps;
-     panels/toolbar/drawer stay opaque for data readability */
-  background: transparent; color: var(--text);
+  background: var(--bg); color: var(--text);
   font-family: var(--sans); font-size: 13px; line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   display: flex; flex-direction: column; overflow: hidden;
 }
-/* the vibrancy material is dark — light theme opts out and paints its own ground */
-:root[data-theme="light"] body,
-:root[data-theme="light"] main,
-:root[data-theme="light"] .essentials { background: var(--bg); }
 
 /* ================= toolbar ================= */
 .toolbar {
@@ -158,7 +152,7 @@ body {
 
 /* ================= essentials strip ================= */
 .essentials {
-  flex: 0 0 auto; background: transparent;
+  flex: 0 0 auto; background: var(--bg);
   border-bottom: 1px solid var(--border); padding: 8px 11px 10px;
   display: flex; flex-direction: column; gap: 3px; align-items: center;
 }
