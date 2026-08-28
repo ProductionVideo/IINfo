@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.7
+
+- **Fixed: audio meters dying when jumping between files / after the inspector
+  lost focus.** IINA reports the web view "hidden" whenever its window isn't
+  frontmost, and v0.1.6 mistook that for "closed". Window state is now pure user
+  intent (`wantWindow`) — opened via the toggle, closed via the toggle or the
+  window's close button — and nothing about focus, occlusion or playback state
+  touches it.
+- The plugin tells the web view when it's genuinely open; until then the web view
+  ticks at 1 Hz instead of 30 and skips all rendering work.
+- Watchdog no longer gives up on the window — if the web view goes quiet it just
+  parks the audio filter and re-arms it when polls resume.
+
 ## 0.1.6
 
 - **Fixed: the inspector wouldn't open.** `standaloneWindow.loadFile()` runs the

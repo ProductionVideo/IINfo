@@ -829,20 +829,26 @@
   });
 
   /* ============================================================ loops */
-  // loadFile() runs this webview before the window is ever shown — only poll
-  // (and let the plugin insert its audio filter) while we're actually visible
-  function vis() { return document.visibilityState !== "hidden"; }
-  function reportVis() { try { iina.postMessage("iinfo-vis", { visible: vis() }); } catch (e) {} }
-  setInterval(function () { if (vis()) iina.postMessage("iinfo-poll"); }, 33);   // ~30 Hz while visible
+  // loadFile() runs this webview before (and after) the window is ever shown.
+  // The plugin tells us when the inspector is actually open; until then we tick
+  // slowly just to stay warm. We do NOT use document.visibilityState — IINA
+  // reports "hidden" whenever the window isn't frontmost, which is most of the time.
+  var active = false;
+  iina.onMessage("iinfo-active", function (d) { active = !!(d && d.active); });
+  function pollLoop() {
+    try { iina.postMessage("iinfo-poll"); } catch (e) {}
+    setTimeout(pollLoop, active ? 33 : 1000);       // ~30 Hz when open, 1 Hz when not
+  }
+  setTimeout(pollLoop, 0);   // defer so the rest of this module is defined before the first frame arrives
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
-  document.addEventListener("visibilitychange", reportVis);
-  window.addEventListener("pageshow", reportVis);
   window.addEventListener("pagehide", function () {
-    try { iina.postMessage("iinfo-vis", { visible: false }); iina.postMessage("iinfo-closing"); } catch (e) {}
+    try { iina.postMessage("iinfo-closing"); } catch (e) {}
   });
 
   var prevT = performance.now();
   function frame(now) {
+    requestAnimationFrame(frame);
+    if (!active) { prevT = now; return; }   // nothing on screen — skip the animation work
     var dt = Math.min(0.1, (now - prevT) / 1000); prevT = now;
     animateMeters(dt, now);
     ORDER.forEach(function (kk) {
@@ -850,7 +856,6 @@
       var pn = P[kk];
       if (pn.tick) { try { pn.tick(); } catch (e) {} }
     });
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
