@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.5)");
+console.log("IINfo: main entry loading (v0.1.6)");
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
@@ -23,7 +23,7 @@ const AF_GRAPH =
   "@" + AF_LABEL +
   ":lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]";
 
-let winOpen = false;
+let winShown = false;      // is the inspector window actually on screen? (NOT just "webview alive")
 let afActive = false;      // is our audio filter currently in the chain?
 let afWanted = false;      // does the webview want metering right now?
 let lastConfig = null;     // last config object received from the webview (for persistence)
@@ -135,7 +135,7 @@ function tryAdd() {
 
 // call once per poll, before reading af-metadata
 function tickFilter() {
-  if (!winOpen || !afWanted) {
+  if (!winShown || !afWanted) {
     if (filterPresent()) tryRemove();
     afActive = false; armedGen = -1;
     return;
@@ -322,25 +322,29 @@ function setupWindow() {
     console.log("IINfo: window setup warning — " + e);
   }
 
+  // loadFile() runs the webview headless — it polls and exchanges config even
+  // before open() is ever called. So the webview being alive does NOT mean the
+  // window is on screen; only openWindow()/closeWindow() and the visibility
+  // messages below change `winShown`.
   standaloneWindow.onMessage("iinfo-ready", () => {
-    // webview mounted — restore its saved config, then it starts polling
     lastContact = Date.now();
-    winOpen = true;
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
   standaloneWindow.onMessage("iinfo-poll", () => {
     lastContact = Date.now();
-    winOpen = true;   // receiving polls means the window is open, whatever we thought
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
-  // the webview sends this from `pagehide` when the window is closed by the user
-  standaloneWindow.onMessage("iinfo-closing", () => {
-    winOpen = false;
-    teardownFilter();
-  });
+  // Safety net for the window being closed by the user (red title-bar button):
+  // the webview reports going hidden and we drop the filter. We deliberately do
+  // NOT trust a "visible" report to *set* winShown — openWindow() is the only
+  // thing that does that — because a headless webview's visibility state can't
+  // be relied on.
+  const markHidden = () => { if (winShown) { winShown = false; teardownFilter(); console.log("IINfo: inspector hidden"); } };
+  standaloneWindow.onMessage("iinfo-vis", (d) => { if (!(d && d.visible)) markHidden(); });
+  standaloneWindow.onMessage("iinfo-closing", markHidden);
 
   standaloneWindow.onMessage("iinfo-config", (cfg) => {
     lastConfig = cfg;
@@ -390,16 +394,19 @@ function setupWindow() {
 function openWindow() {
   try { standaloneWindow.open(); }
   catch (e) { console.log("IINfo: standaloneWindow.open failed — " + e); core.osd("IINfo: could not open inspector window"); return; }
-  winOpen = true;
+  winShown = true;
   lastContact = Date.now();   // grace period until the webview starts polling
+  console.log("IINfo: inspector opened");
 }
 function closeWindow() {
-  standaloneWindow.close();
-  winOpen = false;
-  teardownFilter(); // don't leave the filter running once the window is gone
+  try { standaloneWindow.close(); } catch (e) {}
+  winShown = false;
+  teardownFilter(); // don't leave the analysis filter running once the window is gone
+  console.log("IINfo: inspector closed");
 }
 function toggleWindow() {
-  winOpen ? closeWindow() : openWindow();
+  console.log("IINfo: toggle (winShown=" + winShown + ")");
+  winShown ? closeWindow() : openWindow();
 }
 
 /* ------------------------------------------------------------------- wiring */
@@ -430,7 +437,7 @@ function on(ev, fn) { try { event.on(ev, fn); } catch (e) { console.log("IINfo: 
 
 on("iina.file-loaded", () => {
   fileGen++;
-  if (winOpen) standaloneWindow.postMessage("iinfo-data", collect());
+  if (winShown) standaloneWindow.postMessage("iinfo-data", collect());
 });
 on("mpv.audio-params.changed", () => {
   const sig = JSON.stringify(native("audio-params") || {});
@@ -438,7 +445,7 @@ on("mpv.audio-params.changed", () => {
 });
 on("mpv.end-file", () => { freshGen = -1; });
 on("iina.window-will-close", () => {
-  winOpen = false;
+  winShown = false;
   if (filterPresent()) tryRemove();
 });
 
@@ -447,8 +454,8 @@ on("iina.window-will-close", () => {
 // afWanted is left intact, so metering resumes by itself once polls come back.
 setInterval(() => {
   try {
-    if (winOpen && lastContact && Date.now() - lastContact > 2500) {
-      winOpen = false;
+    if (winShown && lastContact && Date.now() - lastContact > 2500) {
+      winShown = false;
       teardownFilter();
     }
   } catch (e) {}

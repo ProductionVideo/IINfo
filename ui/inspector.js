@@ -829,9 +829,17 @@
   });
 
   /* ============================================================ loops */
-  setInterval(function () { iina.postMessage("iinfo-poll"); }, 33);       // ~30 Hz data
+  // loadFile() runs this webview before the window is ever shown — only poll
+  // (and let the plugin insert its audio filter) while we're actually visible
+  function vis() { return document.visibilityState !== "hidden"; }
+  function reportVis() { try { iina.postMessage("iinfo-vis", { visible: vis() }); } catch (e) {} }
+  setInterval(function () { if (vis()) iina.postMessage("iinfo-poll"); }, 33);   // ~30 Hz while visible
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
-  window.addEventListener("pagehide", function () { try { iina.postMessage("iinfo-closing"); } catch (e) {} });
+  document.addEventListener("visibilitychange", reportVis);
+  window.addEventListener("pageshow", reportVis);
+  window.addEventListener("pagehide", function () {
+    try { iina.postMessage("iinfo-vis", { visible: false }); iina.postMessage("iinfo-closing"); } catch (e) {}
+  });
 
   var prevT = performance.now();
   function frame(now) {

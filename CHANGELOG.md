@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6
+
+- **Fixed: the inspector wouldn't open.** `standaloneWindow.loadFile()` runs the
+  web view headless at plugin load; its polling was being mistaken for "window is
+  open", so the first ⌥⇧I / menu click ran the *close* branch. Window visibility
+  (`winShown`) is now tracked strictly from `openWindow`/`closeWindow` plus a
+  hidden/close signal from the web view.
+- **Fixed: the audio analysis filter was inserted into every video just from the
+  plugin being installed.** It now only runs while the inspector is actually on
+  screen.
+- The web view stops polling while hidden. Added open/close/toggle log lines.
+
 ## 0.1.5
 
 - Reverted the HUD/vibrancy window — back to a solid opaque window while the
