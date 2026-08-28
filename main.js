@@ -208,7 +208,6 @@ function collect() {
       size: num("file-size"),
       paused: flag("pause"),
       speed: num("speed"),
-      eofReached: flag("eof-reached"),
     },
 
     /* timecode & frames */
@@ -251,20 +250,16 @@ function collect() {
     video: {
       w: vp.w, h: vp.h, dw: vp.dw, dh: vp.dh,
       aspect: vp.aspect, aspectName: vp["aspect-name"], par: vp.par,
-      pixelformat: vp.pixelformat, hwPixelformat: vp["hw-pixelformat"],
-      avgBpp: vp["average-bpp"],
+      pixelformat: vp.pixelformat,
       colormatrix: vp.colormatrix, colorlevels: vp.colorlevels,
-      primaries: vp.primaries, gamma: vp.gamma,
-      sigPeak: vp["sig-peak"], light: vp.light,
+      primaries: vp.primaries, gamma: vp.gamma, sigPeak: vp["sig-peak"],
       chromaLocation: vp["chroma-location"],
       rotate: vp.rotate, stereoIn: vp["stereo-in"], alpha: vp.alpha,
       codec: str("video-codec"),
-      format: str("video-format"),
       decoder: (function () {
         const ct = native("current-tracks/video"); return ct ? (ct["decoder-desc"] || ct.codec) : null;
       })(),
       hwdec: str("hwdec-current"),
-      hwdecInterop: str("hwdec-interop"),
       bitrate: num("video-bitrate"),
     },
 
@@ -296,9 +291,6 @@ function collect() {
       estVfFps: num("estimated-vf-fps"),
       cacheDuration: cacheState["cache-duration"] != null ? cacheState["cache-duration"] : num("demuxer-cache-duration"),
       cacheUnderrun: cacheState["underrun"] === true,
-      totalBitrate: num("packet-video-bitrate") != null || num("packet-audio-bitrate") != null
-        ? (num("packet-video-bitrate") || 0) + (num("packet-audio-bitrate") || 0)
-        : null,
     },
 
     /* metering — `fresh` is false until the data provably belongs to this clip */
@@ -317,12 +309,13 @@ function collect() {
 function setupWindow() {
   standaloneWindow.loadFile("ui/inspector.html");
   standaloneWindow.setProperty({
-    title: "IINfo — QC Inspector",
+    title: "IINfo",
     resizable: true,
+    hudWindow: true,            // translucent / vibrancy, like IINA's own Inspector
+    fullSizeContentView: true,
     hideTitleBar: false,
-    fullSizeContentView: false,
   });
-  standaloneWindow.setFrame(420, 720);
+  standaloneWindow.setFrame(440, 780);
 
   standaloneWindow.onMessage("iinfo-ready", () => {
     // webview mounted — restore its saved config, then it starts polling
@@ -382,7 +375,6 @@ function setupWindow() {
         case "seek-end":       { const d = num("duration"); if (d) core.seekTo(Math.max(0, d - 0.05)); break; }
         case "mute":           mpv.command("cycle", ["mute"]); break;
         case "speed-mult":     if (typeof a.value === "number") mpv.command("multiply", ["speed", String(a.value)]); break;
-        case "speed-reset":    mpv.set("speed", 1); break;
       }
     } catch (e) { console.log("IINfo action error: " + e); }
     // push a fresh frame right after an action so the UI updates immediately
