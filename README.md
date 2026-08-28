@@ -28,8 +28,8 @@ Below it, every section is an independent toggle (**Panels ▾** button):
 | **Video Signal / Color** | Coded vs display resolution, DAR / PAR, pixel format, chroma subsampling + bit depth, chroma siting, colour range (TV/PC), matrix, primaries, transfer (HDR-highlighted), signal peak, rotation, 3D/alpha |
 | **Codec & Bitrate** | Container, file size, video codec + decoder, hardware-decode path, live video bitrate (with sparkline), audio codec + bitrate |
 | **A/V Sync & Dropped Frames** | A/V sync offset in ms (green/amber/red) with history sparkline, decoder-dropped and output-dropped frame counters, mistimed / delayed frames, display refresh vs filtered fps, demux cache |
-| **Audio Waveform** | Live scrolling min/max envelope + RMS band, per channel (or summed), built from `astats` `Min/Max/RMS_level`. Clipping columns turn red |
-| **Audio Levels** | Per-channel bar meters — RMS fill on an alpha-graded green→red scale, white peak tick, red peak-hold, dBFS readout, clip warning |
+| **Audio Waveform** | Live scrolling min–max envelope + RMS body, smoothed into per-channel (or summed) blobs, from `astats` `Min/Max/RMS_level`. Themed accent colour; red only where a sample clips |
+| **Audio Levels** | Per-channel bar meters — RMS fill on a themed accent gradient that shifts to amber/red only in the top few dB, white peak tick, red peak-hold, dBFS readout |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, Loudness Range, True Peak (dBTP), target reference. Momentary sparkline |
 | **Audio Format** | Sample rate, channel count + layout, sample format, codec, track title / language |
 
@@ -41,21 +41,25 @@ clips.
 
 ### Display settings (Settings ▾)
 
-- **Theme** — Auto (follows macOS), Dark, Black (OLED), Light, High contrast
-- **Readout font** — the monospace face for all numeric readouts (System mono, SF Mono,
-  Menlo, Monaco, PT Mono, Andale Mono, Courier; JetBrains / IBM Plex Mono if installed)
+- **Theme** — Black (OLED, default), Dark, Graphite, Midnight Blue, Green Phosphor,
+  Amber CRT, High contrast, Light, Auto (follows macOS)
+- **Readout font** — Courier (default) plus SF Mono, Menlo, Monaco, PT Mono, Andale
+  Mono, and a set of installable faces (JetBrains Mono, IBM Plex Mono, Fira Code,
+  Cascadia Code, …) that fall back to a system monospace when absent
 - **Text size** — XS … XXL
 - **Sum waveform channels** — one combined lane instead of one per channel
 
-All of these, plus which panels are open, persist across sessions via `iina.preferences`.
+Every setting, plus which panels are open, is persisted across restarts
+(`iina.preferences` + `sync()`).
 
 ### Transport controls (top bar)
-- Skip to start / end · step one frame back / forward · **play/pause** (colour- and
-  icon-changes with state) · exact-frame screenshot without subs/OSD
+- Skip to start / end · step one frame back / forward · **play/pause** (icon and
+  colour change with state) · exact-frame screenshot without subs/OSD
 - **Jump bar** — `−10s −1s −10f −5f · +5f +10f +1s +10s` (frame-accurate steps between
   1 frame and 1 second, since holding "next frame" in IINA is painful)
 - **Scrub bar** in the essentials strip — click or drag to seek, with a time tooltip
-- **Go field** — `01:23:45;12`, `01:23:45.500`, `#12345` (frame), or `90s`
+- **Go field** — `01:23:45;12`, `01:23:45.500`, `#12345` (frame), or `90s`. Clicking the
+  big timecode or frame readout drops it straight into this field to tweak
 - **Report** — plain-text snapshot of every field for notes / tickets
 
 ### Keyboard (while the inspector window is focused)
@@ -109,20 +113,21 @@ Then: open a video ▸ **Plugin** menu ▸ **Toggle IINfo Inspector** (`⌥⇧I`
   built once and updated in place — never re-rendered — so scrolling is stable.
   `requestAnimationFrame` eases the meters and redraws the canvases (waveform,
   sparklines); small ring buffers hold the history.
-- Audio analysis inserts a labelled filter at runtime:
-  `af add @iinfo:lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]`.
-  It is removed when all three audio panels are off and when the window closes, and
-  fully rebuilt (new instance) on `iina.file-loaded` and `mpv.audio-params.changed`.
-- **Stale-audio guard:** each data frame carries a `gen` counter (bumped on file
-  change) and a `meter.fresh` flag. The plugin snapshots `af-metadata` right after a
-  rebuild and withholds metering data until it provably differs from that snapshot,
-  so mpv handing back the *previous* clip's metadata after a close→open can't freeze
-  the meters or waveform. `mpv.end-file` blanks them immediately. The web view drops
-  all history whenever `gen` changes.
+- Audio analysis uses a labelled runtime filter,
+  `@iinfo:lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]`.
+  Its whole lifecycle is driven from the poll handler — installed, torn down,
+  reinstalled per clip, and retried if `af add` failed because the audio wasn't
+  ready — so nothing depends on an event firing at the right instant. A close→open,
+  a track switch, or mpv dropping the filter all self-heal on the next poll.
+- **Stale-audio guard:** every payload carries a `gen` counter (bumped on file /
+  audio change) and a `meter.fresh` flag. Metering data is withheld until it's
+  non-empty, >250 ms past install, and diverged from the snapshot taken at install,
+  so the previous clip's `af-metadata` can never drive the UI. The web view drops
+  its history whenever `gen` changes; `af add` failures surface as an on-panel message.
 - Playback keys (`Space`, `←/→`, `,`/`.`, …) are captured in the web view and relayed
   as actions, so IINA's core controls keep working while the inspector window is focused.
 - Panel visibility and display settings are persisted through `iina.preferences`
-  (one JSON blob under the `config` key).
+  (`set` + `sync`, one JSON blob under `config`).
 
 ## Permissions
 

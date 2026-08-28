@@ -85,16 +85,25 @@ function framesToTimecode(frameNumber, fps) {
   return pad(hh) + ":" + pad(mm) + ":" + pad(ss) + sep + pad(ff);
 }
 
-/* ------------------------------------------------------------ audio filter */
+/* ------------------------------------------------------------ audio filter
+ *
+ * The whole lifecycle is driven from tickFilter(), which runs on every poll
+ * (~30 Hz). Nothing about it is gated on an event firing at the right moment —
+ * so a close -> open, a mid-stream track switch, mpv dropping the filter, or an
+ * `af add` that failed because the audio wasn't ready yet all self-heal on the
+ * next poll.
+ */
 
-let staleSnap = "{}";      // af-metadata captured right after a (re)build — treated as stale
-let meterFreshGen = -1;    // fileGen for which live metadata has been confirmed fresh
-let lastRebuild = 0;       // Date.now() of the last add/remove of @iinfo
+let armedGen = -1;         // fileGen the current @iinfo instance was installed for
+let freshGen = -1;         // fileGen whose live metadata has diverged from the install snapshot
+let installedAt = 0;       // Date.now() the current @iinfo instance was added
+let staleSnap = "{}";      // af-metadata captured right after install
+let afError = "";          // last `af add` failure message, surfaced to the UI
 
 function filterPresent() {
   const list = native("af");
   if (!Array.isArray(list)) return false;
-  return list.some((f) => f && f.label === AF_LABEL);
+  return list.some((f) => f && (f.label === AF_LABEL || f.label === "@" + AF_LABEL));
 }
 
 function snapshotMeta() {
@@ -102,47 +111,52 @@ function snapshotMeta() {
   catch (e) { return "{}"; }
 }
 
-function addFilter() {
+function tryRemove() {
+  try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
+}
+function tryAdd() {
   try {
     mpv.command("af", ["add", AF_GRAPH]);
     afActive = true;
-    lastRebuild = Date.now();
+    afError = "";
+    installedAt = Date.now();
+    armedGen = fileGen;
+    freshGen = -1;
     staleSnap = snapshotMeta();
-    meterFreshGen = -1;
-    console.log("IINfo: metering filter added");
+    return true;
   } catch (e) {
     afActive = false;
-    console.log("IINfo: failed to add metering filter — " + e);
+    afError = String(e);
+    return false;
   }
 }
 
-function removeFilter() {
-  try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
-  afActive = false;
-  lastRebuild = Date.now();
-}
-
-function ensureAudioFilter(want) {
-  afWanted = want;
-  const present = filterPresent();
-  if (want && !present) addFilter();
-  else if (!want && present) { removeFilter(); console.log("IINfo: metering filter removed"); }
-  else afActive = present;
-}
-
-// force a brand-new filter instance: resets ebur128 integration and makes
-// af-metadata stop returning the previous clip's values. Called on every file
-// change and audio reconfig.
-function rebuildFilter() {
-  if (!winOpen) return;
-  if (!afWanted) { ensureAudioFilter(false); return; }
-  if (afActive && Date.now() - lastRebuild < 400) {  // a rebuild just landed; only re-baseline
-    staleSnap = snapshotMeta();
-    meterFreshGen = -1;
+// call once per poll, before reading af-metadata
+function tickFilter() {
+  if (!winOpen || !afWanted) {
+    if (filterPresent()) tryRemove();
+    afActive = false; armedGen = -1;
     return;
   }
-  removeFilter();
-  addFilter();
+  const present = filterPresent();
+  if (armedGen !== fileGen) {
+    // clip changed (or first arm): tear any carried-over instance down this
+    // poll, install a fresh one the next -> no synchronous remove/add race
+    if (present) { tryRemove(); afActive = false; return; }
+    tryAdd();
+    return;
+  }
+  // armed for the current clip
+  if (!present) { tryAdd(); return; }   // mpv dropped it — put it back
+  afActive = true;
+}
+
+// pull the filter out without forgetting that the webview wants it — so it
+// comes back on its own once the window is open again
+function teardownFilter() {
+  if (filterPresent()) tryRemove();
+  afActive = false;
+  armedGen = -1;
 }
 
 /* --------------------------------------------------------- data collection */
@@ -157,25 +171,28 @@ function collect() {
   let frameCount = num("estimated-frame-count");
   if (frameCount == null && dur != null && fps) frameCount = Math.round(dur * fps);
 
+  tickFilter();
+
   const vp = native("video-params") || {};
   const ap = native("audio-params") || {};
   const fi = native("video-frame-info") || {};
   const cacheState = native("demuxer-cache-state") || {};
 
-  // metering: only expose data once we've confirmed it belongs to the current
-  // clip (it has changed since the post-load snapshot). Guards against mpv
+  // metering: only expose data once it provably belongs to the current clip —
+  // it's non-empty, it has been >250 ms since the filter was installed, and it
+  // has diverged from the snapshot taken at install time. Guards against mpv
   // handing back the previous file's af-metadata after a close/open.
   let meterFresh = false;
   let afMeta = {};
-  if (afActive && str("filename")) {
+  const hasName = !!str("filename");
+  if (afActive && hasName && armedGen === fileGen) {
     const live = native("af-metadata/" + AF_LABEL) || {};
-    if (meterFreshGen === fileGen) {
-      meterFresh = true;
-      afMeta = live;
-    } else if (Object.keys(live).length && JSON.stringify(live) !== staleSnap) {
-      meterFresh = true;
-      meterFreshGen = fileGen;
-      afMeta = live;
+    const liveStr = JSON.stringify(live);
+    const nonEmpty = liveStr !== "{}" && Object.keys(live).length > 0;
+    if (freshGen === fileGen && nonEmpty) {
+      meterFresh = true; afMeta = live;
+    } else if (nonEmpty && Date.now() - installedAt > 250 && (staleSnap === "{}" || liveStr !== staleSnap)) {
+      meterFresh = true; freshGen = fileGen; afMeta = live;
     }
   }
 
@@ -289,6 +306,7 @@ function collect() {
       active: afActive,
       wanted: afWanted,
       fresh: meterFresh,
+      error: (afWanted && !afActive) ? (afError || "") : "",
       raw: afMeta,
     },
   };
@@ -309,27 +327,31 @@ function setupWindow() {
   standaloneWindow.onMessage("iinfo-ready", () => {
     // webview mounted — restore its saved config, then it starts polling
     lastContact = Date.now();
+    winOpen = true;
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
   standaloneWindow.onMessage("iinfo-poll", () => {
     lastContact = Date.now();
+    winOpen = true;   // receiving polls means the window is open, whatever we thought
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
   // the webview sends this from `pagehide` when the window is closed by the user
   standaloneWindow.onMessage("iinfo-closing", () => {
     winOpen = false;
-    ensureAudioFilter(false);
+    teardownFilter();
   });
 
   standaloneWindow.onMessage("iinfo-config", (cfg) => {
     lastConfig = cfg;
-    try { preferences.set("config", JSON.stringify(cfg)); } catch (e) {}
-    // toggle the analysis filter based on whether an audio panel needs it
+    // preferences.set alone only persists to disk when a prefs page closes —
+    // sync() forces the flush so panel visibility + display settings survive a restart
+    try { preferences.set("config", JSON.stringify(cfg)); preferences.sync(); } catch (e) {}
+    // enable metering whenever an audio panel wants it
     const pnl = (cfg && cfg.panels) || {};
-    ensureAudioFilter(!!(pnl.levels || pnl.loudness || pnl.waveform));
+    afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
   });
 
   standaloneWindow.onMessage("iinfo-action", (a) => {
@@ -376,7 +398,7 @@ function openWindow() {
 function closeWindow() {
   standaloneWindow.close();
   winOpen = false;
-  ensureAudioFilter(false); // don't leave the filter running once the window is gone
+  teardownFilter(); // don't leave the filter running once the window is gone
 }
 function toggleWindow() {
   winOpen ? closeWindow() : openWindow();
@@ -397,39 +419,33 @@ menu.addItem(menu.item("IINfo: Previous Frame", () => { try { mpv.command("frame
 menu.addItem(menu.item("IINfo: Next Frame", () => { try { mpv.command("frame-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+RIGHT" }));
 menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }, { keyBinding: "Alt+Shift+s" }));
 
-// on every file change: bump the generation counter (webview resets its
-// waveform / meter / sparkline history) and rebuild the analysis filter from
-// scratch so ebur128's integrated loudness and astats stats don't carry over
-// from the previous clip, and so af-metadata stops returning stale values.
+// bump the generation counter on any file / audio change. tickFilter() (run
+// every poll) notices the new gen and reinstalls a fresh @iinfo instance, so
+// ebur128's integration and astats stats never carry across clips. The webview
+// also resets its waveform / meter / sparkline history when `gen` changes.
+let lastAudioSig = "";
 event.on("iina.file-loaded", () => {
   fileGen++;
-  rebuildFilter();
   if (winOpen) standaloneWindow.postMessage("iinfo-data", collect());
 });
-
-// audio track switch / format reconfig mid-session: same treatment
 event.on("mpv.audio-params.changed", () => {
-  if (!winOpen || !afWanted) return;
-  fileGen++;
-  rebuildFilter();
+  const sig = JSON.stringify(native("audio-params") || {});
+  if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
 });
-
-// playback ended and nothing is loaded — blank the meters immediately
-event.on("mpv.end-file", () => {
-  staleSnap = snapshotMeta();
-  meterFreshGen = -1;
-});
+event.on("mpv.end-file", () => { freshGen = -1; });
 
 event.on("iina.window-will-close", () => {
-  ensureAudioFilter(false);
+  winOpen = false;
+  if (filterPresent()) tryRemove();
 });
 
 // watchdog: if the webview has gone quiet (window closed by any means, or crashed)
-// stop believing it is open and drop the analysis filter so audio is untouched
+// stop believing it is open and drop the analysis filter so audio is untouched.
+// afWanted is left intact, so metering resumes by itself once polls come back.
 setInterval(() => {
   if (winOpen && lastContact && Date.now() - lastContact > 2500) {
     winOpen = false;
-    ensureAudioFilter(false);
+    teardownFilter();
   }
 }, 1000);
 

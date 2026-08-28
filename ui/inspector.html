@@ -34,11 +34,37 @@
     --text: #ffffff; --dim: #d6dae2; --faint: #9aa3b2;
     --accent: #6fbaff; --good: #58e08c; --warn: #ffd35c; --bad: #ff7a7a;
   }
+  :root[data-theme="graphite"] {
+    --bg: #1b1c1e; --panel: #232427; --panel-2: #2c2e32; --border: #3c3f45;
+    --text: #e9eaec; --dim: #a0a3aa; --faint: #74777e;
+    --accent: #8ab4d8; --good: #7fbf8f; --warn: #d8b678; --bad: #d98a8a;
+  }
+  :root[data-theme="midnight"] {
+    --bg: #0b1020; --panel: #131a2e; --panel-2: #1b2438; --border: #2b3852;
+    --text: #e6ecfb; --dim: #97a6c6; --faint: #64749a;
+    --accent: #6ea8ff; --good: #57cc9a; --warn: #ffcf6b; --bad: #ff7b8a;
+  }
+  :root[data-theme="phosphor"] {
+    --bg: #04120a; --panel: #08210f; --panel-2: #0c2c16; --border: #164a26;
+    --text: #b9ffcf; --dim: #6fce93; --faint: #3f8c5d;
+    --accent: #46f08a; --good: #46f08a; --warn: #e0e26b; --bad: #ff6b6b;
+  }
+  :root[data-theme="amber"] {
+    --bg: #140d02; --panel: #211705; --panel-2: #2c1f08; --border: #4a3514;
+    --text: #ffd9a0; --dim: #cf9f6f; --faint: #8c6a3f;
+    --accent: #ffb545; --good: #9fd46b; --warn: #ffd35c; --bad: #ff7a5c;
+  }
   :root {
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
+  /* readouts stay selectable so a value can be copied out */
+  .ess-tc, .ess-frame, .kv dt, .kv dd, .panel .body, dialog textarea,
+  input, .cap, .meter-val, .meter-label {
+    -webkit-user-select: text; user-select: text;
+  }
+  ::selection { background: var(--accent); color: var(--bg); }
   html, body { height: 100%; }
   html { zoom: 1; }
   body {
@@ -137,9 +163,16 @@
     border-bottom: 1px solid var(--border); padding: 8px 11px 10px;
     display: flex; flex-direction: column; gap: 3px; align-items: center;
   }
-  .ess-tc { font-family: var(--mono); font-size: clamp(26px, 9vw, 40px); font-weight: 650; letter-spacing: .01em; line-height: 1.1; }
+  .ess-tc { font-family: var(--mono); font-size: clamp(26px, 9vw, 40px); font-weight: 650; letter-spacing: .01em; line-height: 1.1; cursor: text; }
   .ess-tc .sep { color: var(--accent); }
-  .ess-frame { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+  .ess-tc .to-jump, .ess-frame .to-jump {
+    cursor: pointer; opacity: 0; margin-left: 6px; font-size: .42em; vertical-align: middle;
+    color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
+    font-family: var(--sans); font-weight: 600; letter-spacing: .04em; transition: opacity .1s, color .1s;
+  }
+  .essentials:hover .to-jump { opacity: 1; }
+  .to-jump:hover { color: var(--accent); border-color: var(--accent); }
+  .ess-frame { font-family: var(--mono); font-size: 13px; color: var(--accent); cursor: text; }
   .ess-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; justify-content: center; margin-top: 3px; }
 
   /* scrub bar */
@@ -214,12 +247,12 @@
   .meter-fill {
     position: absolute; left: 0; right: 0; bottom: 0;
     background-repeat: no-repeat; background-position: bottom;
+    /* JS replaces this with a theme-tinted gradient (accent until the peak zone) */
     background-image: linear-gradient(to top,
-      hsla(150, 62%, 48%, 0.28) 0%,
-      hsla(150, 64%, 50%, 0.70) 46%,
-      hsla(96,  70%, 50%, 0.82) 66%,
-      hsla(45, 100%, 55%, 0.92) 84%,
-      hsla(6,  95%, 60%, 1) 100%);
+      rgba(86, 168, 255, 0.16) 0%,
+      rgba(86, 168, 255, 0.7) 82%,
+      rgba(255, 201, 77, 0.9) 93%,
+      rgba(255, 95, 95, 1) 100%);
   }
   .meter-peak { position: absolute; left: 0; right: 0; height: 2px; background: var(--text); }
   .meter-hold { position: absolute; left: 0; right: 0; height: 2px; background: var(--bad); }
@@ -306,8 +339,8 @@
 <div id="drawer"></div>
 
 <div class="essentials">
-  <div class="ess-tc" id="ess-tc">--:--:--:--</div>
-  <div class="ess-frame" id="ess-frame">frame —</div>
+  <div class="ess-tc" id="ess-tc"><span id="ess-tc-val">--:--:--:--</span><span class="to-jump" id="tc-to-jump" title="Send this timecode to the Go field">GO ↦</span></div>
+  <div class="ess-frame" id="ess-frame"><span id="ess-frame-val">frame —</span><span class="to-jump" id="fr-to-jump" title="Send this frame number to the Go field">GO ↦</span></div>
   <div class="ess-meta" id="ess-meta"></div>
   <div class="scrub" id="scrub" title="Click or drag to seek">
     <div class="scrub-track">
@@ -338,6 +371,29 @@
   function cssVar(name, fallback) {
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
+  }
+  function rgba(color, a) {
+    var h = (color || "").trim();
+    if (h.charAt(0) === "#") h = h.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var n = parseInt(h, 16);
+    if (h.length !== 6 || isNaN(n)) return "rgba(86,168,255," + a + ")";
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+  }
+
+  // meter fill: theme accent almost all the way up, warn/bad only in the peak zone
+  var METER_GRAD = null;
+  function meterGradient() {
+    if (METER_GRAD) return METER_GRAD;
+    var a = cssVar("--accent", "#56a8ff"), w = cssVar("--warn", "#ffc94d"), b = cssVar("--bad", "#ff5f5f");
+    METER_GRAD = "linear-gradient(to top,"
+      + rgba(a, 0.14) + " 0%,"
+      + rgba(a, 0.34) + " 40%,"
+      + rgba(a, 0.7) + " 78%,"
+      + rgba(a, 0.92) + " 88%,"
+      + rgba(w, 0.95) + " 93%,"
+      + rgba(b, 1) + " 100%)";
+    return METER_GRAD;
   }
 
   /* ============================================================ formatting */
@@ -419,11 +475,23 @@
   }
   function clearWave() { wave.cols.length = 0; wave.lastSig = ""; wave.chNames = []; }
 
+  // trace a smooth polyline through pts (quadratic curves via midpoints)
+  function smoothTo(ctx, pts) {
+    if (!pts.length) return;
+    ctx.lineTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length - 1; i++) {
+      var mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+  }
+
   function drawWave(canvas) {
     var dpr = window.devicePixelRatio || 1;
     var nCh = wave.chNames.length || 1;
-    var laneH = 46;
-    var cssH = Math.max(laneH, nCh * laneH);
+    var groups = wave.mono ? 1 : nCh;
+    var laneH = 52;
+    var cssH = Math.max(laneH, groups * laneH);
     if (canvas.style.height !== cssH + "px") canvas.style.height = cssH + "px";
     var w = canvas.clientWidth, h = cssH;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -432,47 +500,78 @@
     var ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     var css = getComputedStyle(document.documentElement);
-    var cAcc = css.getPropertyValue("--accent").trim();
-    var cBad = css.getPropertyValue("--bad").trim();
-    var cDim = css.getPropertyValue("--faint").trim();
-    var cGrid = "rgba(140,146,160,.18)";
+    var acc = css.getPropertyValue("--accent").trim() || "#56a8ff";
+    var bad = css.getPropertyValue("--bad").trim() || "#ff5f5f";
+    var faint = css.getPropertyValue("--faint").trim() || "#737a8a";
     ctx.clearRect(0, 0, w, h);
 
     var cols = wave.cols;
-    var groups = wave.mono ? 1 : nCh;
     var gH = h / groups;
-    var colW = Math.max(1, w / wave.max);
+    var colW = w / wave.max;
     var x0 = w - cols.length * colW;
+    var AMP = gH * 0.42;
 
     for (var g = 0; g < groups; g++) {
-      var midY = g * gH + gH / 2;
-      // zero line + lane separator
-      ctx.strokeStyle = cGrid;
-      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(w, midY); ctx.stroke();
-      if (g > 0) { ctx.beginPath(); ctx.moveTo(0, g * gH); ctx.lineTo(w, g * gH); ctx.stroke(); }
-      ctx.fillStyle = cDim; ctx.font = "9px " + css.getPropertyValue("--mono");
-      ctx.fillText(wave.mono ? "sum" : (wave.chNames[g] || "ch"), 4, g * gH + 11);
+      var laneTop = g * gH, midY = laneTop + gH / 2;
 
-      for (var i = 0; i < cols.length; i++) {
-        var c = cols[i];
-        var mn, mx, rms;
-        if (wave.mono) {
-          mn = Math.min.apply(null, c.mn); mx = Math.max.apply(null, c.mx);
-          rms = c.rms.reduce(function (a, b) { return a + b; }, 0) / c.rms.length;
-        } else { mn = c.mn[g]; mx = c.mx[g]; rms = c.rms[g]; }
-        var x = x0 + i * colW;
-        var yTop = midY - mx * (gH * 0.46);
-        var yBot = midY - mn * (gH * 0.46);
-        ctx.fillStyle = c.clip ? cBad : cAcc;
-        ctx.globalAlpha = 0.55;
-        ctx.fillRect(x, yTop, Math.max(1, colW - 0.3), Math.max(1, yBot - yTop));
-        // rms band
-        ctx.globalAlpha = 1;
-        var yR1 = midY - rms * (gH * 0.46), yR2 = midY + rms * (gH * 0.46);
-        ctx.fillStyle = c.clip ? cBad : cAcc;
-        ctx.fillRect(x, yR1, Math.max(1, colW - 0.3), Math.max(1, yR2 - yR1));
+      // faint centre line + lane divider
+      ctx.strokeStyle = rgba(faint, 0.22); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(w, midY); ctx.stroke();
+      if (g > 0) { ctx.strokeStyle = rgba(faint, 0.28); ctx.beginPath(); ctx.moveTo(0, laneTop); ctx.lineTo(w, laneTop); ctx.stroke(); }
+
+      if (cols.length > 1) {
+        var top = [], bot = [], rTop = [], rBot = [];
+        for (var i = 0; i < cols.length; i++) {
+          var c = cols[i], mn, mx, rms;
+          if (wave.mono) {
+            mn = Math.min.apply(null, c.mn); mx = Math.max.apply(null, c.mx);
+            rms = c.rms.reduce(function (s, v) { return s + v; }, 0) / c.rms.length;
+          } else { mn = c.mn[g]; mx = c.mx[g]; rms = c.rms[g]; }
+          var x = x0 + i * colW + colW / 2;
+          top.push({ x: x, y: midY - mx * AMP });
+          bot.push({ x: x, y: midY - mn * AMP });
+          rTop.push({ x: x, y: midY - rms * AMP });
+          rBot.push({ x: x, y: midY + rms * AMP });
+        }
+
+        // min/max envelope — soft blob
+        var grad = ctx.createLinearGradient(0, midY - AMP, 0, midY + AMP);
+        grad.addColorStop(0, rgba(acc, 0.05));
+        grad.addColorStop(0.5, rgba(acc, 0.22));
+        grad.addColorStop(1, rgba(acc, 0.05));
+        ctx.beginPath();
+        ctx.moveTo(top[0].x, top[0].y);
+        smoothTo(ctx, top);
+        for (var j = bot.length - 1; j >= 0; j--) ctx.lineTo(bot[j].x, bot[j].y);
+        ctx.closePath();
+        ctx.fillStyle = grad; ctx.fill();
+
+        // RMS body — brighter
+        ctx.beginPath();
+        ctx.moveTo(rTop[0].x, rTop[0].y);
+        smoothTo(ctx, rTop);
+        for (var k = rBot.length - 1; k >= 0; k--) ctx.lineTo(rBot[k].x, rBot[k].y);
+        ctx.closePath();
+        ctx.fillStyle = rgba(acc, 0.5); ctx.fill();
+
+        // envelope outline
+        ctx.strokeStyle = rgba(acc, 0.55); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(top[0].x, top[0].y); smoothTo(ctx, top); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(bot[0].x, bot[0].y); smoothTo(ctx, bot); ctx.stroke();
+
+        // clip flags — the only place red appears
+        ctx.strokeStyle = rgba(bad, 0.92); ctx.lineWidth = 2;
+        for (var m = 0; m < cols.length; m++) {
+          if (!cols[m].clip) continue;
+          var cx = x0 + m * colW + colW / 2;
+          ctx.beginPath(); ctx.moveTo(cx, laneTop + 3); ctx.lineTo(cx, laneTop + gH - 3); ctx.stroke();
+        }
       }
-      ctx.globalAlpha = 1;
+
+      // lane label
+      ctx.fillStyle = rgba(faint, 0.95);
+      ctx.font = '9px ' + (css.getPropertyValue("--mono") || "monospace");
+      ctx.fillText(wave.mono ? "L+R+…" : (wave.chNames[g] || "ch"), 5, laneTop + 11);
     }
   }
 
@@ -564,8 +663,10 @@
       el: p, body: body, tag: tag, cells: cells,
       set: function (lb, val, cls) {
         var c = cells[lb]; if (!c) return;
-        c.dd.textContent = (val == null || val === "") ? "—" : String(val);
-        c.dd.className = cls || "";
+        var s = (val == null || val === "") ? "—" : String(val);
+        if (c.dd.textContent !== s) c.dd.textContent = s;   // don't clobber a selection when unchanged
+        var cc = cls || "";
+        if (c.dd.className !== cc) c.dd.className = cc;
       },
       row: function (lb, show) { var c = cells[lb]; if (c) { c.dt.hidden = !show; c.dd.hidden = !show; } },
     };
@@ -717,10 +818,10 @@
       update: function (d) {
         var m = d.meter || {};
         tag.textContent = wave.mono ? "summed" : "per channel";
+        if (m.error) { note.textContent = "analysis filter error — " + m.error; note.className = "hint bad"; return; }
         if (!m.wanted) note.textContent = "enable to insert the analysis filter";
-        else if (!m.fresh) note.textContent = "waiting for audio — play the file";
-        else if (!wave.cols.length) note.textContent = "waiting for audio — play the file";
-        else note.textContent = "translucent = min/max envelope · solid = RMS";
+        else if (!m.fresh || !wave.cols.length) note.textContent = "waiting for audio — play the file";
+        else note.textContent = "outline / soft fill = min–max · solid body = RMS · red = clip";
         note.className = "hint";
       },
       tick: function () { drawWave(cv); } };
@@ -763,7 +864,8 @@
             meters.appendChild(col);
           });
         }
-        if (!chs.length) { note.textContent = m.wanted ? "waiting for audio — play the file" : "enable to insert the analysis filter"; note.className = "hint"; }
+        if (d.meter && d.meter.error) { note.textContent = "analysis filter error — " + d.meter.error; note.className = "hint bad"; }
+        else if (!chs.length) { note.textContent = m.wanted ? "waiting for audio — play the file" : "enable to insert the analysis filter"; note.className = "hint"; }
         else {
           var clip = chs.some(function (c) { return meterModel[c].peak > -0.1; });
           note.textContent = clip ? "⚠ peak ≥ 0 dBFS — clipping" : "bar = RMS · white tick = peak · red tick = peak-hold";
@@ -771,12 +873,14 @@
         }
       },
       tick: function () {
+        var grad = meterGradient();
         meters.querySelectorAll(".meter-col").forEach(function (col) {
           var m = meterModel[+col.dataset.ch]; if (!m) return;
           var track = col.querySelector(".meter-track");
           var fill = col.querySelector(".meter-fill");
           fill.style.height = pct(m.rms) + "%";
-          // anchor the alpha/hue gradient to the full track so colour stops map to dBFS
+          // anchor the theme-tinted gradient to the full track so its stops map to dBFS
+          if (fill._grad !== grad) { fill.style.backgroundImage = grad; fill._grad = grad; }
           fill.style.backgroundSize = "100% " + (track.clientHeight || 150) + "px";
           col.querySelector(".meter-peak").style.bottom = pct(m.peak) + "%";
           col.querySelector(".meter-hold").style.bottom = pct(m.hold) + "%";
@@ -832,26 +936,33 @@
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
-    ["auto", "Auto (follow macOS)"], ["dark", "Dark"], ["black", "Black (OLED)"],
-    ["light", "Light"], ["highcontrast", "High contrast"],
+    ["black", "Black (OLED)"], ["dark", "Dark"], ["graphite", "Graphite"],
+    ["midnight", "Midnight Blue"], ["phosphor", "Green Phosphor"], ["amber", "Amber CRT"],
+    ["highcontrast", "High contrast"], ["light", "Light"], ["auto", "Auto (follow macOS)"],
   ];
+  var DEFAULT_MONO = '"Courier New", Courier, ui-monospace, monospace';
   var FONTS = [
-    ["", "System mono"],
-    ['"SF Mono", ui-monospace, Menlo, monospace', "SF Mono"],
+    ['"Courier New", Courier, ui-monospace, monospace', "Courier"],
+    ['ui-monospace, Menlo, Monaco, monospace', "System mono"],
+    ['ui-monospace, "SF Mono", Menlo, monospace', "SF Mono"],
     ["Menlo, monospace", "Menlo"],
     ["Monaco, monospace", "Monaco"],
     ['"PT Mono", monospace', "PT Mono"],
     ['"Andale Mono", monospace', "Andale Mono"],
-    ['"Courier New", Courier, monospace', "Courier"],
-    ['"JetBrains Mono", ui-monospace, monospace', "JetBrains Mono *"],
-    ['"IBM Plex Mono", ui-monospace, monospace', "IBM Plex Mono *"],
+    ['Courier, monospace', "Courier (plain)"],
+    ['"JetBrains Mono", ui-monospace, monospace', "JetBrains Mono †"],
+    ['"IBM Plex Mono", ui-monospace, monospace', "IBM Plex Mono †"],
+    ['"Fira Code", ui-monospace, monospace', "Fira Code †"],
+    ['"Cascadia Code", "Cascadia Mono", ui-monospace, monospace', "Cascadia Code †"],
+    ['"Roboto Mono", ui-monospace, monospace', "Roboto Mono †"],
+    ['Hack, ui-monospace, monospace', "Hack †"],
+    ['"Source Code Pro", ui-monospace, monospace', "Source Code Pro †"],
   ];
   var SIZES = [["0.85", "XS"], ["0.92", "Small"], ["1", "Normal"], ["1.1", "Large"], ["1.25", "XL"], ["1.45", "XXL"]];
-  var DEFAULT_MONO = "ui-monospace, \"SF Mono\", \"JetBrains Mono\", Menlo, Consolas, monospace";
 
   var state = {
-    panels: {}, data: null, gen: null, resetAt: 0,
-    settings: { theme: "auto", monoFont: "", textSize: "1" },
+    panels: {}, data: null, gen: null,
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1" },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -866,6 +977,7 @@
     document.documentElement.style.setProperty("--mono", s.monoFont || DEFAULT_MONO);
     var z = parseFloat(s.textSize) || 1;
     document.documentElement.style.zoom = z;
+    METER_GRAD = null;   // recompute the theme-tinted meter gradient on next tick
   }
   if (mqLight) {
     var onScheme = function () { if (state.settings.theme === "auto") applySettings(); };
@@ -934,7 +1046,7 @@
     waveRow.appendChild(wcb);
     waveRow.appendChild(el("span", "set-label", "Sum waveform channels"));
     dgroup.appendChild(waveRow);
-    dgroup.appendChild(el("div", "drawer-note", "* JetBrains / IBM Plex Mono only if installed on this Mac"));
+    dgroup.appendChild(el("div", "drawer-note", "† falls back to a system monospace unless the font is installed"));
     dr.appendChild(dgroup);
   }
 
@@ -958,30 +1070,54 @@
     if (state.data) applyData();
   }
 
+  /* ---- essentials: stable structure, diff-updated so a selection survives ---- */
+  var tcVal = $("ess-tc-val"), tcParts = null, curTC = "";
+  function renderTC(tc) {
+    if (tc === curTC) return;          // unchanged (e.g. paused) — leave the DOM & any selection alone
+    curTC = tc;
+    var bits = tc.split(/([:;])/);     // ["HH",":","MM",":","SS",";","FF"]
+    if (!tcParts || tcParts.length !== bits.length) {
+      tcVal.textContent = "";
+      tcParts = bits.map(function (b) {
+        var isSep = b === ":" || b === ";";
+        var sp = el("span", isSep ? "sep" : null, b);
+        tcVal.appendChild(sp);
+        return sp;
+      });
+    } else {
+      bits.forEach(function (b, i) { if (tcParts[i].textContent !== b) tcParts[i].textContent = b; });
+    }
+  }
+  var frVal = $("ess-frame-val"), curFrame = "";
+  function renderFrame(s) { if (s !== curFrame) { curFrame = s; frVal.textContent = s; } }
+  var emSig = "";
+  function renderMeta(chips) {
+    var sig = chips.map(function (c) { return c[0] + "|" + c[1]; }).join(",");
+    if (sig === emSig) return;
+    emSig = sig;
+    var em = $("ess-meta"); em.textContent = "";
+    chips.forEach(function (c) { em.appendChild(el("span", "chip" + (c[1] ? " " + c[1] : ""), c[0])); });
+  }
+
   /* ============================================================ data in */
   function applyData() {
     var d = state.data; if (!d) return;
-
-    // essentials
     var t = d.time;
-    var tc = (t.dropFrame ? t.timecode : t.timecodeNDF) || "--:--:--:--";
-    var etc = $("ess-tc"); etc.innerHTML = "";
-    tc.split(/([:;])/).forEach(function (part) {
-      if (part === ":" || part === ";") etc.appendChild(el("span", "sep", part));
-      else etc.appendChild(document.createTextNode(part));
-    });
-    $("ess-frame").textContent = "frame " + fmtInt(t.frame) + (t.frameCount ? " / " + fmtInt(t.frameCount) : "");
-    var em = $("ess-meta"); em.innerHTML = "";
-    function mchip(txt, cls) { em.appendChild(el("span", "chip" + (cls ? " " + cls : ""), txt)); }
-    if (t.fps != null) mchip(fmt(t.fps, 3) + " fps");
+
+    renderTC((t.dropFrame ? t.timecode : t.timecodeNDF) || "--:--:--:--");
+    renderFrame("frame " + fmtInt(t.frame) + (t.frameCount ? " / " + fmtInt(t.frameCount) : ""));
+
+    var chips = [];
+    if (t.fps != null) chips.push([fmt(t.fps, 3) + " fps", ""]);
     if (d.perf.avsync != null) {
       var a = d.perf.avsync, aa = Math.abs(a);
-      mchip("sync " + (a > 0 ? "+" : "") + fmt(a * 1000, 0) + "ms", aa > 0.1 ? "bad" : aa > 0.04 ? "warn" : "");
+      chips.push(["sync " + (a > 0 ? "+" : "") + fmt(a * 1000, 0) + "ms", aa > 0.1 ? "bad" : aa > 0.04 ? "warn" : ""]);
     }
-    if (d.perf.decDrop || d.perf.voDrop) mchip("drop " + fmtInt(d.perf.decDrop) + "/" + fmtInt(d.perf.voDrop), "bad");
+    if (d.perf.decDrop || d.perf.voDrop) chips.push(["drop " + fmtInt(d.perf.decDrop) + "/" + fmtInt(d.perf.voDrop), "bad"]);
     var pk = -Infinity;
     Object.keys(meterModel).forEach(function (c) { pk = Math.max(pk, meterModel[c].peakT); });
-    if (isFinite(pk)) mchip("peak " + fmt(pk, 1) + " dBFS", pk > -0.1 ? "bad" : pk > -3 ? "warn" : "");
+    if (isFinite(pk)) chips.push(["peak " + fmt(pk, 1) + " dBFS", pk > -0.1 ? "bad" : pk > -3 ? "warn" : ""]);
+    renderMeta(chips);
 
     // header
     $("fname").textContent = d.file.name || "—";
@@ -1132,6 +1268,25 @@
   }
   $("b-jump").addEventListener("click", doJump);
   $("jump").addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Enter") doJump(); });
+
+  function fillJump(val) {
+    var j = $("jump");
+    j.value = val;
+    j.focus(); j.select();
+  }
+  // click the essentials timecode / frame -> drop it into the Go field to tweak.
+  // a plain click fills; a click that ends a text selection is left alone so you
+  // can still copy the value out by hand.
+  $("ess-tc").addEventListener("click", function (e) {
+    if (e.target.id === "tc-to-jump") { fillJump(curTC); return; }
+    if (!window.getSelection || !String(window.getSelection())) fillJump(curTC);
+  });
+  $("ess-frame").addEventListener("click", function (e) {
+    var d = state.data, n = d && d.time ? d.time.frame : null;
+    if (n == null) return;
+    if (e.target.id === "fr-to-jump") { fillJump("#" + Math.round(n)); return; }
+    if (!window.getSelection || !String(window.getSelection())) fillJump("#" + Math.round(n));
+  });
 
   /* ---- keyboard: keep IINA's core playback controls working while this
      window is focused (the web view is a separate process, so we relay them) ---- */
