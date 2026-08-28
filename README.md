@@ -29,7 +29,7 @@ Below it, every section is an independent toggle (**Panels ▾** button):
 | **Codec & Bitrate** | Container, file size, video codec + decoder, hardware-decode path, live video bitrate (with sparkline), audio codec + bitrate |
 | **A/V Sync & Dropped Frames** | A/V sync offset in ms (green/amber/red) with history sparkline, decoder-dropped and output-dropped frame counters, mistimed / delayed frames, display refresh vs filtered fps, demux cache |
 | **Audio Waveform** | Live scrolling min/max envelope + RMS band, per channel (or summed), built from `astats` `Min/Max/RMS_level`. Clipping columns turn red |
-| **Audio Levels** | Per-channel RMS bar meters with peak tick + peak-hold, dBFS readout, clip warning |
+| **Audio Levels** | Per-channel bar meters — RMS fill on an alpha-graded green→red scale, white peak tick, red peak-hold, dBFS readout, clip warning |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, Loudness Range, True Peak (dBTP), target reference. Momentary sparkline |
 | **Audio Format** | Sample rate, channel count + layout, sample format, codec, track title / language |
 
@@ -39,7 +39,7 @@ them is enabled and removed when they're all off or the window closes. It is reb
 on every file change so `ebur128`'s integrated loudness never carries over between
 clips.
 
-### Display settings (Panels ▾)
+### Display settings (Settings ▾)
 
 - **Theme** — Auto (follows macOS), Dark, Black (OLED), Light, High contrast
 - **Readout font** — the monospace face for all numeric readouts (System mono, SF Mono,
@@ -50,13 +50,28 @@ clips.
 All of these, plus which panels are open, persist across sessions via `iina.preferences`.
 
 ### Transport controls (top bar)
-- `⏮` / `⏭` — jump to start / end
-- `◀▐` / `▐▶` — step one frame back / forward (also `⌥⇧←` / `⌥⇧→`)
-- `⏯` — play / pause (primary button)
-- `−10s −1s +1s +10s` — exact seek nudges
-- `◉` — exact-frame screenshot without subtitles/OSD (`⌥⇧S`)
-- **jump field** — type `01:23:45;12`, `01:23:45.500`, `#12345` (frame), or `83.4` (seconds) + Enter
-- **Copy report** — dumps a plain-text snapshot of every field for pasting into notes/tickets
+- Skip to start / end · step one frame back / forward · **play/pause** (colour- and
+  icon-changes with state) · exact-frame screenshot without subs/OSD
+- **Jump bar** — `−10s −1s −10f −5f · +5f +10f +1s +10s` (frame-accurate steps between
+  1 frame and 1 second, since holding "next frame" in IINA is painful)
+- **Scrub bar** in the essentials strip — click or drag to seek, with a time tooltip
+- **Go field** — `01:23:45;12`, `01:23:45.500`, `#12345` (frame), or `90s`
+- **Report** — plain-text snapshot of every field for notes / tickets
+
+### Keyboard (while the inspector window is focused)
+
+The web view relays IINA's core playback keys so they keep working when the inspector,
+not the video window, has focus:
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| `Space` / `k` | play / pause | `,` / `.` | frame back / forward |
+| `←` / `→` | seek ∓5 s | `Shift+←` / `Shift+→` | frame back / forward |
+| `j` / `l` | seek ∓10 s | `Shift+J` / `Shift+L` | ∓10 s (exact) |
+| `Home` / `End` | start / end | `m` | mute |
+| `[` / `]` | speed ∓ | | |
+
+Plus the app-wide menu bindings: `⌥⇧I` toggle window, `⌥⇧←/→` frame step, `⌥⇧S` screenshot.
 
 ## Install
 
@@ -97,10 +112,15 @@ Then: open a video ▸ **Plugin** menu ▸ **Toggle IINfo Inspector** (`⌥⇧I`
 - Audio analysis inserts a labelled filter at runtime:
   `af add @iinfo:lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]`.
   It is removed when all three audio panels are off and when the window closes, and
-  fully rebuilt on `iina.file-loaded`.
-- Every data frame carries a `gen` counter that the plugin bumps on `iina.file-loaded`;
-  the web view drops its waveform / meter / sparkline history when it changes, so
-  nothing freezes on the previous clip's last frame.
+  fully rebuilt (new instance) on `iina.file-loaded` and `mpv.audio-params.changed`.
+- **Stale-audio guard:** each data frame carries a `gen` counter (bumped on file
+  change) and a `meter.fresh` flag. The plugin snapshots `af-metadata` right after a
+  rebuild and withholds metering data until it provably differs from that snapshot,
+  so mpv handing back the *previous* clip's metadata after a close→open can't freeze
+  the meters or waveform. `mpv.end-file` blanks them immediately. The web view drops
+  all history whenever `gen` changes.
+- Playback keys (`Space`, `←/→`, `,`/`.`, …) are captured in the web view and relayed
+  as actions, so IINA's core controls keep working while the inspector window is focused.
 - Panel visibility and display settings are persisted through `iina.preferences`
   (one JSON blob under the `config` key).
 

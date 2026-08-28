@@ -87,30 +87,62 @@ function framesToTimecode(frameNumber, fps) {
 
 /* ------------------------------------------------------------ audio filter */
 
+let staleSnap = "{}";      // af-metadata captured right after a (re)build — treated as stale
+let meterFreshGen = -1;    // fileGen for which live metadata has been confirmed fresh
+let lastRebuild = 0;       // Date.now() of the last add/remove of @iinfo
+
 function filterPresent() {
   const list = native("af");
   if (!Array.isArray(list)) return false;
   return list.some((f) => f && f.label === AF_LABEL);
 }
 
+function snapshotMeta() {
+  try { return JSON.stringify(native("af-metadata/" + AF_LABEL) || {}); }
+  catch (e) { return "{}"; }
+}
+
+function addFilter() {
+  try {
+    mpv.command("af", ["add", AF_GRAPH]);
+    afActive = true;
+    lastRebuild = Date.now();
+    staleSnap = snapshotMeta();
+    meterFreshGen = -1;
+    console.log("IINfo: metering filter added");
+  } catch (e) {
+    afActive = false;
+    console.log("IINfo: failed to add metering filter — " + e);
+  }
+}
+
+function removeFilter() {
+  try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
+  afActive = false;
+  lastRebuild = Date.now();
+}
+
 function ensureAudioFilter(want) {
   afWanted = want;
   const present = filterPresent();
-  if (want && !present) {
-    try {
-      mpv.command("af", ["add", AF_GRAPH]);
-      afActive = true;
-      console.log("IINfo: metering filter added");
-    } catch (e) {
-      console.log("IINfo: failed to add metering filter — " + e);
-    }
-  } else if (!want && present) {
-    try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
-    afActive = false;
-    console.log("IINfo: metering filter removed");
-  } else {
-    afActive = present;
+  if (want && !present) addFilter();
+  else if (!want && present) { removeFilter(); console.log("IINfo: metering filter removed"); }
+  else afActive = present;
+}
+
+// force a brand-new filter instance: resets ebur128 integration and makes
+// af-metadata stop returning the previous clip's values. Called on every file
+// change and audio reconfig.
+function rebuildFilter() {
+  if (!winOpen) return;
+  if (!afWanted) { ensureAudioFilter(false); return; }
+  if (afActive && Date.now() - lastRebuild < 400) {  // a rebuild just landed; only re-baseline
+    staleSnap = snapshotMeta();
+    meterFreshGen = -1;
+    return;
   }
+  removeFilter();
+  addFilter();
 }
 
 /* --------------------------------------------------------- data collection */
@@ -128,9 +160,24 @@ function collect() {
   const vp = native("video-params") || {};
   const ap = native("audio-params") || {};
   const fi = native("video-frame-info") || {};
-  const afMeta = afActive ? (native("af-metadata/" + AF_LABEL) || {}) : {};
-
   const cacheState = native("demuxer-cache-state") || {};
+
+  // metering: only expose data once we've confirmed it belongs to the current
+  // clip (it has changed since the post-load snapshot). Guards against mpv
+  // handing back the previous file's af-metadata after a close/open.
+  let meterFresh = false;
+  let afMeta = {};
+  if (afActive && str("filename")) {
+    const live = native("af-metadata/" + AF_LABEL) || {};
+    if (meterFreshGen === fileGen) {
+      meterFresh = true;
+      afMeta = live;
+    } else if (Object.keys(live).length && JSON.stringify(live) !== staleSnap) {
+      meterFresh = true;
+      meterFreshGen = fileGen;
+      afMeta = live;
+    }
+  }
 
   return {
     now: Date.now(),
@@ -237,10 +284,11 @@ function collect() {
         : null,
     },
 
-    /* metering (only populated while @iinfo filter is active) */
+    /* metering — `fresh` is false until the data provably belongs to this clip */
     meter: {
       active: afActive,
       wanted: afWanted,
+      fresh: meterFresh,
       raw: afMeta,
     },
   };
@@ -286,16 +334,33 @@ function setupWindow() {
 
   standaloneWindow.onMessage("iinfo-action", (a) => {
     if (!a || !a.type) return;
+    const fr = () => num("container-fps") || num("estimated-vf-fps");
     try {
       switch (a.type) {
         case "frame-next":     mpv.command("frame-step", []); break;
         case "frame-prev":     mpv.command("frame-back-step", []); break;
+        case "frame-jump": {
+          const n = Math.round(a.value || 0), f = num("estimated-frame-number"), rate = fr();
+          if (n === 0) break;
+          if (f != null && rate) core.seekTo((Math.max(0, f + n) + 0.5) / rate);
+          else if (rate) core.seek(n / rate, true);
+          break;
+        }
+        case "seek-frame-abs": {
+          const rate = fr();
+          if (typeof a.value === "number" && rate) core.seekTo((Math.max(0, a.value) + 0.5) / rate);
+          break;
+        }
         case "toggle-pause":   flag("pause") ? core.resume() : core.pause(); break;
         case "screenshot":     mpv.command("screenshot", ["video"]); core.osd("IINfo: exact-frame screenshot saved"); break;
         case "seek-abs":       if (typeof a.value === "number") core.seekTo(a.value); break;
+        case "seek-rel":       if (typeof a.value === "number") core.seek(a.value, false); break;
         case "nudge":          if (typeof a.value === "number") core.seek(a.value, true); break;
         case "seek-start":     core.seekTo(0); break;
         case "seek-end":       { const d = num("duration"); if (d) core.seekTo(Math.max(0, d - 0.05)); break; }
+        case "mute":           mpv.command("cycle", ["mute"]); break;
+        case "speed-mult":     if (typeof a.value === "number") mpv.command("multiply", ["speed", String(a.value)]); break;
+        case "speed-reset":    mpv.set("speed", 1); break;
       }
     } catch (e) { console.log("IINfo action error: " + e); }
     // push a fresh frame right after an action so the UI updates immediately
@@ -338,14 +403,21 @@ menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.comman
 // from the previous clip, and so af-metadata stops returning stale values.
 event.on("iina.file-loaded", () => {
   fileGen++;
-  if (winOpen && afWanted) {
-    try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
-    afActive = false;
-    ensureAudioFilter(true);
-  } else if (winOpen) {
-    ensureAudioFilter(afWanted);
-  }
+  rebuildFilter();
   if (winOpen) standaloneWindow.postMessage("iinfo-data", collect());
+});
+
+// audio track switch / format reconfig mid-session: same treatment
+event.on("mpv.audio-params.changed", () => {
+  if (!winOpen || !afWanted) return;
+  fileGen++;
+  rebuildFilter();
+});
+
+// playback ended and nothing is loaded — blank the meters immediately
+event.on("mpv.end-file", () => {
+  staleSnap = snapshotMeta();
+  meterFreshGen = -1;
 });
 
 event.on("iina.window-will-close", () => {
