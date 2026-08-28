@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8
+
+- The inspector window now **remembers its size and position** between sessions.
+  Position is only restored if it still lands on a screen (your display setup may
+  have changed), otherwise just the size is.
+- **Text-size range shifted up** — the old sizes read too small. "Normal" is now
+  what was one notch above; the smallest option is the old "Normal".
+
 ## 0.1.7
 
 - **Fixed: audio meters dying when jumping between files / after the inspector

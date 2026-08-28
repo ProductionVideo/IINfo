@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.7)");
+console.log("IINfo: main entry loading (v0.1.8)");
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
@@ -317,7 +317,8 @@ function setupWindow() {
       hideTitleBar: false,
       fullSizeContentView: false,
     });
-    standaloneWindow.setFrame(440, 780);
+    // default frame; a saved size/position (if any) is applied in openWindow()
+    if (!(lastConfig && lastConfig.win)) standaloneWindow.setFrame(520, 880);
   } catch (e) {
     console.log("IINfo: window setup warning — " + e);
   }
@@ -393,7 +394,39 @@ function setupWindow() {
   });
 }
 
+// Restore the window's last size (always) and position (only if it still lands on
+// a screen — the display setup may have changed). The webview reports geometry in
+// DOM coords (origin = top-left of the primary screen, y down); setFrame wants
+// Cocoa coords (origin = bottom-left of the primary screen, y up).
+function restoreGeom() {
+  const g = lastConfig && lastConfig.win;
+  if (!g || !(g.w > 200 && g.w < 6000 && g.h > 150 && g.h < 6000)) return;
+
+  let screens = null;
+  try { screens = core.window.screens; } catch (e) {}
+  if (!Array.isArray(screens) || !screens.length) {
+    try { standaloneWindow.setFrame(g.w, g.h); } catch (e) {}
+    return;
+  }
+  const primary = screens.find((s) => s.frame && s.frame.x === 0 && s.frame.y === 0) || screens[0];
+  const primaryH = primary.frame.height;
+  const cocoaX = g.x;
+  const cocoaY = primaryH - g.y - g.h;
+
+  // require the window's title strip to sit on some screen
+  const tx = cocoaX + g.w / 2, ty = cocoaY + g.h - 14;
+  const onScreen = screens.some((s) => {
+    const f = s.frame;
+    return tx >= f.x - 6 && tx <= f.x + f.width + 6 && ty >= f.y - 6 && ty <= f.y + f.height + 6;
+  });
+  try {
+    if (onScreen) standaloneWindow.setFrame(g.w, g.h, cocoaX, cocoaY);
+    else standaloneWindow.setFrame(g.w, g.h);
+  } catch (e) {}
+}
+
 function openWindow() {
+  try { restoreGeom(); } catch (e) { console.log("IINfo: restoreGeom — " + e); }
   try { standaloneWindow.open(); }
   catch (e) { console.log("IINfo: standaloneWindow.open failed — " + e); core.osd("IINfo: could not open inspector window"); return; }
   wantWindow = true;

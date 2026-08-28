@@ -592,11 +592,11 @@
     ['Hack, ui-monospace, monospace', "Hack †"],
     ['"Source Code Pro", ui-monospace, monospace', "Source Code Pro †"],
   ];
-  var SIZES = [["0.85", "XS"], ["0.92", "Small"], ["1", "Normal"], ["1.1", "Large"], ["1.25", "XL"], ["1.45", "XXL"]];
+  var SIZES = [["1", "Small"], ["1.15", "Normal"], ["1.3", "Large"], ["1.5", "XL"], ["1.75", "XXL"], ["2.1", "Huge"]];
 
   var state = {
-    panels: {}, data: null, gen: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1" },
+    panels: {}, data: null, gen: null, win: null,
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15" },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -689,6 +689,7 @@
       panels: state.panels,
       wave: { mono: wave.mono },
       settings: state.settings,
+      win: state.win,
     });
   }
   function applyConfig(cfg) {
@@ -699,10 +700,37 @@
       if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
       if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
     }
+    if (cfg && cfg.win) state.win = cfg.win;
     applySettings();
     buildDrawer(); applyVisibility();
     if (state.data) applyData();
   }
+
+  /* ---- report the window's size + position so the plugin can restore it ---- */
+  var geomTimer = null;
+  function currentGeom() {
+    return {
+      x: window.screenX, y: window.screenY,
+      w: window.outerWidth || window.innerWidth,
+      h: window.outerHeight || (window.innerHeight + 28),
+    };
+  }
+  function geomChanged(a, b) {
+    return !a || Math.abs(a.x - b.x) > 2 || Math.abs(a.y - b.y) > 2 ||
+           Math.abs(a.w - b.w) > 2 || Math.abs(a.h - b.h) > 2;
+  }
+  function maybeReportGeom(immediate) {
+    var g = currentGeom();
+    if (!(g.w > 100 && g.h > 100)) return;      // headless / not realised yet
+    if (!geomChanged(state.win, g)) return;
+    state.win = g;
+    if (immediate) { clearTimeout(geomTimer); pushConfig(); return; }
+    clearTimeout(geomTimer);
+    geomTimer = setTimeout(pushConfig, 700);    // debounce drag/resize
+  }
+  window.addEventListener("resize", function () { maybeReportGeom(false); });
+  setInterval(function () { if (active) maybeReportGeom(false); }, 2000);  // catch moves (no move event)
+  window.addEventListener("pagehide", function () { maybeReportGeom(true); });
 
   /* ---- essentials: stable structure, diff-updated so a selection survives ---- */
   var tcVal = $("ess-tc-val"), tcParts = null, curTC = "";
