@@ -685,6 +685,7 @@
   }
 
   function pushConfig() {
+    if (!awake) return;   // stay silent while IINA is backgrounded
     iina.postMessage("iinfo-config", {
       panels: state.panels,
       wave: { mono: wave.mono },
@@ -705,6 +706,12 @@
     buildDrawer(); applyVisibility();
     if (state.data) applyData();
   }
+
+  // true while our timers run at full speed (i.e. IINA is foregrounded). When
+  // macOS backgrounds IINA, WebKit throttles setTimeout and this flips false —
+  // the poll loop and geometry reporter then stay silent to avoid the crash in
+  // IINA's message hub when it delivers to a collected callback.
+  var awake = true, lastTick = performance.now();
 
   /* ---- report the window's size + position so the plugin can restore it ---- */
   var geomTimer = null;
@@ -729,7 +736,8 @@
     geomTimer = setTimeout(pushConfig, 700);    // debounce drag/resize
   }
   window.addEventListener("resize", function () { maybeReportGeom(false); });
-  setInterval(function () { if (active) maybeReportGeom(false); }, 2000);  // catch moves (no move event)
+  // catch window moves (there's no move event); skipped while IINA is backgrounded
+  setInterval(function () { if (awake) maybeReportGeom(false); }, 2000);
   window.addEventListener("pagehide", function () { maybeReportGeom(true); });
 
   /* ---- essentials: stable structure, diff-updated so a selection survives ---- */
@@ -857,14 +865,19 @@
   });
 
   /* ============================================================ loops */
-  // main.js only keeps this page loaded while the inspector is open (it swaps in
-  // blank.html on close), so we just poll steadily. WebKit clamps the timer to
-  // ~1 Hz on its own when the window is genuinely hidden.
+  // main.js keeps this page loaded only while the inspector is open (blank.html
+  // otherwise). We poll ~25 Hz — BUT when macOS backgrounds IINA, WebKit clamps
+  // our timers, so the real gap between ticks balloons. That is exactly when
+  // IINA crashes delivering a message to a collected callback, so when we detect
+  // the throttle we go completely silent until we're running full-speed again.
   function pollLoop() {
-    try { iina.postMessage("iinfo-poll"); } catch (e) {}
+    var now = performance.now();
+    awake = (now - lastTick) < 400;   // our own timer isn't being throttled
+    lastTick = now;
+    if (awake) { try { iina.postMessage("iinfo-poll"); } catch (e) {} }
     setTimeout(pollLoop, 40);
   }
-  setTimeout(pollLoop, 0);   // defer so the rest of this module is defined before the first frame arrives
+  setTimeout(pollLoop, 0);
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
   window.addEventListener("pagehide", function () {
     try { iina.postMessage("iinfo-closing"); } catch (e) {}

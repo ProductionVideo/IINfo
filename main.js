@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.10)");
+console.log("IINfo: main entry loading (v0.1.11)");
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless

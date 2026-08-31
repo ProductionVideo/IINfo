@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.11
+
+**Fix — IINA crashing when idle (4th report, same stack).** IINA's message hub
+traps (`SIGTRAP`) when it delivers a standalone-window message to a
+garbage-collected callback — it only happens once IINA has been backgrounded a
+while, because our inspector keeps polling and every message is a chance to hit
+that bug.
+
+The web view now watches the real gap between its own timer ticks. When macOS
+backgrounds IINA, WebKit throttles the timer and the gap balloons — the moment we
+see that, the web view **goes completely silent** (no polls, no config, no
+geometry) until it's running full-speed again, which it detects and resumes on
+its own. Also fixes a stray `ReferenceError` (a leftover `active` reference from
+v0.1.10) that fired every 2 s.
+
 ## 0.1.10
 
 **Fix — v0.1.9 broke the inspector (blank window / no realtime updates).**
