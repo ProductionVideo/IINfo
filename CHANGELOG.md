@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.10
+
+**Fix — v0.1.9 broke the inspector (blank window / no realtime updates).**
+IINA's `standaloneWindow.loadFile()` clears every registered message listener.
+v0.1.9 moved `loadFile()` to open-time but still registered the handlers once at
+plugin start, so `loadFile` wiped them and the web view could not talk to the
+plugin. Handlers are now re-registered immediately after every `loadFile()`.
+
+Also reverted the rAF-based "is it painting" gating from v0.1.9 — it could
+mis-read a visible-but-not-frontmost window as hidden and throttle updates. The
+web view now just polls steadily (WebKit throttles the timer itself when the
+window is genuinely hidden), and the crash mitigation is simply: the inspector
+page is only loaded while the window is open.
+
 ## 0.1.9
 
 **Fixes**

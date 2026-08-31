@@ -857,30 +857,12 @@
   });
 
   /* ============================================================ loops */
-  // main.js only keeps this page loaded while the inspector should be open (it
-  // swaps in blank.html on close). "visible" = the page is actually painting,
-  // which we detect from requestAnimationFrame still firing — reliable, unlike
-  // document.visibilityState (which reports hidden whenever we're not frontmost).
-  var lastRaf = performance.now();
-  function visible() { return performance.now() - lastRaf < 700; }
-
-  var hiddenSince = 0;
+  // main.js only keeps this page loaded while the inspector is open (it swaps in
+  // blank.html on close), so we just poll steadily. WebKit clamps the timer to
+  // ~1 Hz on its own when the window is genuinely hidden.
   function pollLoop() {
-    var vis = visible();
-    try { iina.postMessage("iinfo-poll", { visible: vis }); } catch (e) {}
-    if (!vis) {
-      if (!hiddenSince) hiddenSince = Date.now();
-      // invisible for 5 straight minutes -> it was closed (or buried); ask the
-      // plugin to swap us for a blank page, and idle hard until it does
-      if (Date.now() - hiddenSince > 300000) {
-        try { iina.postMessage("iinfo-shutdown"); } catch (e) {}
-        setTimeout(pollLoop, 30000);
-        return;
-      }
-    } else {
-      hiddenSince = 0;
-    }
-    setTimeout(pollLoop, vis ? 33 : 2500);   // ~30 Hz when on screen, ~0.4 Hz when not
+    try { iina.postMessage("iinfo-poll"); } catch (e) {}
+    setTimeout(pollLoop, 40);
   }
   setTimeout(pollLoop, 0);   // defer so the rest of this module is defined before the first frame arrives
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
@@ -891,7 +873,6 @@
   var prevT = performance.now();
   function frame(now) {
     requestAnimationFrame(frame);
-    lastRaf = now;
     var dt = Math.min(0.1, (now - prevT) / 1000); prevT = now;
     animateMeters(dt, now);
     ORDER.forEach(function (kk) {
