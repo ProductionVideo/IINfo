@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.12
+
+**Fix — the real cause of the idle crash.** IINA stores each `onMessage` / menu /
+event callback as a `JSManagedValue` anchored only to one of its API objects. If
+JavaScriptCore does not treat that object as a GC root (it may not), our callbacks
+— anonymous closures with nothing else referencing them — become collectable, and
+a full GC (which tends to run once the app has idled) frees them. IINA's
+`callListener` then traps dereferencing the now-nil value. Playback state is
+irrelevant; it just needs a GC while a message is in flight.
+
+Every callback handed to IINA is now held in a module-level object/array so the GC
+can never collect it. Keeps the v0.1.11 "stay quiet while backgrounded" behaviour
+as belt-and-braces.
+
 ## 0.1.11
 
 **Fix — IINA crashing when idle (4th report, same stack).** IINA's message hub

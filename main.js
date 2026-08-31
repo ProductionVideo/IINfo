@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.11)");
+console.log("IINfo: main entry loading (v0.1.12)");
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
@@ -451,14 +451,19 @@ try {
   if (saved) lastConfig = JSON.parse(saved);
 } catch (e) { lastConfig = null; }
 
+// every callback we hand to IINA (menu items, events, window messages) is pinned
+// in PINS so JavaScriptCore's GC can't collect it — see the note above onMsg()
+const PINS = [toggleWindow];
+function pin(fn) { PINS.push(fn); return fn; }
+
 // register the menu first and defensively — a later failure must never keep the
 // "Toggle IINfo Inspector" item from appearing
 try {
   menu.addItem(menu.item("Toggle IINfo Inspector", toggleWindow, { keyBinding: "Alt+Shift+i" }));
   menu.addItem(menu.separator());
-  menu.addItem(menu.item("IINfo: Previous Frame", () => { try { mpv.command("frame-back-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+LEFT" }));
-  menu.addItem(menu.item("IINfo: Next Frame", () => { try { mpv.command("frame-step", []); } catch (e) {} }, { keyBinding: "Alt+Shift+RIGHT" }));
-  menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", () => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }, { keyBinding: "Alt+Shift+s" }));
+  menu.addItem(menu.item("IINfo: Previous Frame", pin(() => { try { mpv.command("frame-back-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+LEFT" }));
+  menu.addItem(menu.item("IINfo: Next Frame", pin(() => { try { mpv.command("frame-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+RIGHT" }));
+  menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
 } catch (e) { console.log("IINfo: menu setup error — " + e); }
 
 // bump the generation counter on any file / audio change. tickFilter() (run
@@ -466,7 +471,7 @@ try {
 // ebur128's integration and astats stats never carry across clips. The webview
 // also resets its waveform / meter / sparkline history when `gen` changes.
 let lastAudioSig = "";
-function on(ev, fn) { try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
+function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
 
 on("iina.file-loaded", () => {
   fileGen++;
