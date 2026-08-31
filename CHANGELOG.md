@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.9
+
+**Fixes**
+
+- **IINA crashing when idle** — three crash reports all pointed at IINA delivering
+  a message from our standalone web view to a torn-down plugin context. The web
+  view is now only loaded while the inspector is open (a blank page is swapped in
+  on close), polls at 0.4 Hz instead of 30 Hz whenever it is not actually
+  painting, and shuts itself down after 5 minutes hidden.
+- **Audio readout intermittently missing after the inspector had been open a
+  while** — `iina.window-will-close` (which also fires on transient player-window
+  teardown, e.g. when playback stops) was permanently clearing the "window is
+  open" flag, so metering never re-armed until you toggled the inspector. It no
+  longer touches that flag.
+- Metering now follows the web view actually being on screen (rAF running) rather
+  than window focus.
+
+**Features**
+
+- **Copy** the current timecode or frame number — hover the essentials readout for
+  `copy` / `go` chips, or press `c` (timecode) / `Shift+C` (frame).
+- **Go field maths.** Absolute: a timecode, `#frame`, `50%`, `90s`. Relative to
+  the current point, repeatable on each Enter: `+5` / `-5` seconds, `+#15` /
+  `-#15` frames, `+2:30`, `+10%`. Or base ± delta: `00:00:05;17 + 2`. Every
+  jump snaps to a frame.
+
 ## 0.1.8
 
 - The inspector window now **remembers its size and position** between sessions.

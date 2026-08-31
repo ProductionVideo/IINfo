@@ -148,6 +148,7 @@ body {
   border-radius: 8px 0 0 8px; padding: 0 9px; height: 34px; border-right: 0;
 }
 .jump input:focus { outline: none; border-color: var(--accent); }
+.jump input.bad { border-color: var(--bad); }
 .jump .btn { border-radius: 0 8px 8px 0; }
 
 /* ================= essentials strip ================= */
@@ -156,17 +157,28 @@ body {
   border-bottom: 1px solid var(--border); padding: 8px 11px 10px;
   display: flex; flex-direction: column; gap: 3px; align-items: center;
 }
-.ess-tc { font-family: var(--mono); font-size: clamp(26px, 9vw, 40px); font-weight: 650; letter-spacing: .01em; line-height: 1.1; cursor: text; }
-.ess-tc .sep { color: var(--accent); }
-.ess-tc .to-jump, .ess-frame .to-jump {
-  cursor: pointer; opacity: 0; margin-left: 6px; font-size: .42em; vertical-align: middle;
-  color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
-  font-family: var(--sans); font-weight: 600; letter-spacing: .04em; transition: opacity .1s, color .1s;
+.ess-tc {
+  font-family: var(--mono); font-size: clamp(24px, 8.5vw, 40px); font-weight: 650;
+  letter-spacing: .01em; line-height: 1.1;
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 2px 8px;
 }
-.essentials:hover .to-jump { opacity: 1; }
-.to-jump:hover { color: var(--accent); border-color: var(--accent); }
-.ess-frame { font-family: var(--mono); font-size: 13px; color: var(--accent); cursor: text; }
+.ess-tc #ess-tc-val, .ess-frame #ess-frame-val { -webkit-user-select: text; user-select: text; cursor: text; }
+.ess-tc .sep { color: var(--accent); }
+.ess-frame { font-family: var(--mono); font-size: 13px; color: var(--accent); display: flex; align-items: center; gap: 8px; }
 .ess-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; justify-content: center; margin-top: 3px; }
+
+/* copy / go chips on the essentials readouts — revealed on hover */
+.ess-acts { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .1s; }
+.essentials:hover .ess-acts, .ess-acts:focus-within { opacity: 1; }
+.ess-tc .ess-acts { font-size: 11px; align-self: center; }
+.ess-frame .ess-acts { font-size: 10px; }
+.mini {
+  font-family: var(--sans); font-weight: 600; letter-spacing: .03em; font-size: 1em;
+  color: var(--dim); background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 3px 7px; cursor: pointer; line-height: 1; white-space: nowrap;
+}
+.mini:hover { color: var(--accent); border-color: var(--accent); }
+.mini:active { transform: translateY(1px); }
 
 /* scrub bar */
 .scrub {

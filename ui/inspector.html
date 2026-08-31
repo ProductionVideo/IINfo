@@ -34,7 +34,9 @@
     </div>
     <button class="btn sq" id="b-shot" data-icon="camera" title="Exact-frame screenshot  (⌥⇧S)"></button>
     <div class="jump">
-      <input id="jump" type="text" placeholder="go to 01:23:45;12  ·  #12345  ·  90s" spellcheck="false" />
+      <input id="jump" type="text" spellcheck="false"
+        placeholder="01:23:45;12 · #4736 · 50% · +5 · -#15 · 00:00:05;17 + 2"
+        title="Go / seek. Absolute: a timecode, #frame, N%, or Ns. Relative to the current point (repeat with Enter): +5 / -5 (seconds), +#15 / -#15 (frames), +2:30, +10%. Or base ± delta: 00:00:05;17 + 5" />
       <button class="btn" id="b-jump">Go</button>
     </div>
     <button class="btn" id="b-gear" data-icon="gear">Settings</button>
@@ -45,8 +47,20 @@
 <div id="drawer"></div>
 
 <div class="essentials">
-  <div class="ess-tc" id="ess-tc"><span id="ess-tc-val">--:--:--:--</span><span class="to-jump" id="tc-to-jump" title="Send this timecode to the Go field">GO ↦</span></div>
-  <div class="ess-frame" id="ess-frame"><span id="ess-frame-val">frame —</span><span class="to-jump" id="fr-to-jump" title="Send this frame number to the Go field">GO ↦</span></div>
+  <div class="ess-tc" id="ess-tc">
+    <span id="ess-tc-val">--:--:--:--</span>
+    <span class="ess-acts">
+      <button class="mini" data-ess="copy-tc" title="Copy timecode  ( c )">copy</button>
+      <button class="mini" data-ess="go-tc" title="Send to the Go field">go ↦</button>
+    </span>
+  </div>
+  <div class="ess-frame" id="ess-frame">
+    <span id="ess-frame-val">frame —</span>
+    <span class="ess-acts">
+      <button class="mini" data-ess="copy-fr" title="Copy frame number  ( ⇧C )">copy</button>
+      <button class="mini" data-ess="go-fr" title="Send to the Go field">go ↦</button>
+    </span>
+  </div>
   <div class="ess-meta" id="ess-meta"></div>
   <div class="scrub" id="scrub" title="Click or drag to seek">
     <div class="scrub-track">

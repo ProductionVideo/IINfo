@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.8)");
+console.log("IINfo: main entry loading (v0.1.9)");
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
@@ -24,6 +24,7 @@ const AF_GRAPH =
   ":lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]";
 
 let wantWindow = false;    // user intent: opened via toggle and not yet closed. NOT tied to focus.
+let webviewVisible = false; // is the webview actually painting (rAF running)?
 let afActive = false;      // is our audio filter currently in the chain?
 let afWanted = false;      // does the webview want metering right now?
 let lastConfig = null;     // last config object received from the webview (for persistence)
@@ -135,7 +136,7 @@ function tryAdd() {
 
 // call once per poll, before reading af-metadata
 function tickFilter() {
-  if (!wantWindow || !afWanted) {
+  if (!wantWindow || !afWanted || !webviewVisible) {
     if (filterPresent()) tryRemove();
     afActive = false; armedGen = -1;
     return;
@@ -308,46 +309,40 @@ function collect() {
 
 /* ------------------------------------------------------------ window setup */
 
-function setupWindow() {
-  try {
-    standaloneWindow.loadFile("ui/inspector.html");
-    standaloneWindow.setProperty({
-      title: "IINfo",
-      resizable: true,
-      hideTitleBar: false,
-      fullSizeContentView: false,
-    });
-    // default frame; a saved size/position (if any) is applied in openWindow()
-    if (!(lastConfig && lastConfig.win)) standaloneWindow.setFrame(520, 880);
-  } catch (e) {
-    console.log("IINfo: window setup warning — " + e);
-  }
+// The webview (ui/inspector.html) is only loaded while the inspector is open —
+// openWindow() loads it, closeWindow() swaps in ui/blank.html. That way nothing
+// of ours runs (or posts messages to IINA) while the window is closed, which is
+// when IINA was crashing after long idle periods.
+let webviewLoaded = false;
 
-  // loadFile() runs the webview headless — it polls and exchanges config even
-  // before open() is ever called, and IINA reports the webview "hidden" whenever
-  // its window isn't frontmost. So NOTHING the webview says changes `wantWindow`
-  // — only the user opening (openWindow) or closing it (closeWindow / red button)
-  // does. `wantWindow` is pure user intent and survives losing focus, playback
-  // ending, and jumping between files.
+function setupWindow() {
+  // register message handlers once — they survive loadFile() and are keyed by
+  // name, so re-registration would just replace them anyway
   standaloneWindow.onMessage("iinfo-ready", () => {
     lastContact = Date.now();
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
-    standaloneWindow.postMessage("iinfo-active", { active: wantWindow });
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
-  standaloneWindow.onMessage("iinfo-poll", () => {
+  standaloneWindow.onMessage("iinfo-poll", (d) => {
     lastContact = Date.now();
+    // the webview reports whether it's actually painting (rAF running). When it's
+    // not — occluded behind the video, or the window was closed with the red
+    // button — we stop touching the audio chain.
+    webviewVisible = !d || d.visible !== false;
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
-  // sent from pagehide — the window was actually closed (red title-bar button)
-  standaloneWindow.onMessage("iinfo-closing", () => {
-    if (!wantWindow) return;
+  // pagehide (blank page swapped in) or a long stretch of being invisible
+  const parkWebview = (why) => {
     wantWindow = false;
+    webviewVisible = false;
     teardownFilter();
-    console.log("IINfo: inspector closed (from window)");
-  });
+    try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
+    console.log("IINfo: inspector closed (" + why + ")");
+  };
+  standaloneWindow.onMessage("iinfo-closing", () => { if (webviewLoaded) parkWebview("window"); });
+  standaloneWindow.onMessage("iinfo-shutdown", () => { if (webviewLoaded) parkWebview("hidden 5 min"); });
 
   standaloneWindow.onMessage("iinfo-config", (cfg) => {
     lastConfig = cfg;
@@ -371,11 +366,6 @@ function setupWindow() {
           if (n === 0) break;
           if (f != null && rate) core.seekTo((Math.max(0, f + n) + 0.5) / rate);
           else if (rate) core.seek(n / rate, true);
-          break;
-        }
-        case "seek-frame-abs": {
-          const rate = fr();
-          if (typeof a.value === "number" && rate) core.seekTo((Math.max(0, a.value) + 0.5) / rate);
           break;
         }
         case "toggle-pause":   flag("pause") ? core.resume() : core.pause(); break;
@@ -426,19 +416,34 @@ function restoreGeom() {
 }
 
 function openWindow() {
-  try { restoreGeom(); } catch (e) { console.log("IINfo: restoreGeom — " + e); }
+  webviewVisible = false;   // until the freshly-loaded webview reports painting
+  try {
+    standaloneWindow.loadFile("ui/inspector.html");
+    webviewLoaded = true;
+    standaloneWindow.setProperty({
+      title: "IINfo",
+      resizable: true,
+      hideTitleBar: false,
+      fullSizeContentView: false,
+    });
+    if (lastConfig && lastConfig.win) restoreGeom();
+    else standaloneWindow.setFrame(520, 880);
+  } catch (e) {
+    console.log("IINfo: window setup — " + e);
+  }
   try { standaloneWindow.open(); }
   catch (e) { console.log("IINfo: standaloneWindow.open failed — " + e); core.osd("IINfo: could not open inspector window"); return; }
   wantWindow = true;
   lastContact = Date.now();   // grace period until the webview starts polling
-  try { standaloneWindow.postMessage("iinfo-active", { active: true }); } catch (e) {}
   console.log("IINfo: inspector opened");
 }
 function closeWindow() {
-  try { standaloneWindow.close(); } catch (e) {}
   wantWindow = false;
+  webviewVisible = false;
   teardownFilter(); // don't leave the analysis filter running once the window is gone
-  try { standaloneWindow.postMessage("iinfo-active", { active: false }); } catch (e) {}
+  try { standaloneWindow.close(); } catch (e) {}
+  // swap the live page out for a blank one so nothing of ours runs while closed
+  try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
   console.log("IINfo: inspector closed");
 }
 function toggleWindow() {
@@ -482,9 +487,14 @@ on("mpv.audio-params.changed", () => {
 });
 on("mpv.end-file", () => { freshGen = -1; });
 on("iina.window-will-close", () => {
-  // the player window is going away — the plugin instance goes with it
-  wantWindow = false;
+  // This also fires on transient player-window teardown (playback stops, some
+  // file jumps) where the inspector is still open — so do NOT clear wantWindow
+  // here or metering dies until the user re-toggles. Just release the filter;
+  // tickFilter() re-arms it on the next poll if the window is still up. The
+  // red-title-bar-button case is handled by the `iinfo-closing` message instead.
   if (filterPresent()) tryRemove();
+  afActive = false; armedGen = -1;
+  console.log("IINfo: window-will-close (wantWindow left " + wantWindow + ")");
 });
 
 // watchdog: if the webview has gone quiet for a while (occluded and throttled by
@@ -492,7 +502,7 @@ on("iina.window-will-close", () => {
 // so the moment polls resume tickFilter() puts the filter back on its own.
 setInterval(() => {
   try {
-    if (wantWindow && afActive && lastContact && Date.now() - lastContact > 4000) {
+    if (wantWindow && afActive && lastContact && Date.now() - lastContact > 8000) {
       teardownFilter();
       console.log("IINfo: webview quiet — filter parked");
     }

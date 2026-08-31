@@ -13,9 +13,10 @@ theme-able window that reports exactly what the player is decoding and rendering
 ## What it shows
 
 A pinned **essentials strip** always shows the critical data — big SMPTE timecode,
-frame number, fps, A/V-sync and peak level — whatever else is on screen. Click the
-timecode or frame number to drop it into the **Go** field. Below it, each panel is an
-independent toggle (**Settings ▾**), and your choices persist:
+frame number, fps, A/V-sync and peak level — whatever else is on screen. Hover it
+for **copy** / **go** chips (`c` copies the timecode, `Shift+C` the frame number).
+Below it, each panel is an independent toggle (**Settings ▾**), and your choices
+persist:
 
 | Panel | Contents |
 |---|---|
@@ -31,8 +32,12 @@ independent toggle (**Settings ▾**), and your choices persist:
 
 **Controls:** skip to start / end · frame step · stateful play/pause · jump bar
 (`−10s −1s −10f −5f · +5f +10f +1s +10s`) · exact-frame screenshot · click/drag
-scrub bar · **Go** field (`01:23:45;12`, `01:23:45.500`, `#12345`, `90s`) ·
-**Report** (plain-text dump of every field).
+scrub bar · **Report** (plain-text dump of every field).
+
+**Go field** — absolute: a timecode (`01:23:45;12`), `#4736` (frame), `50%`, `90s`.
+Relative to the current point, repeatable on each Enter: `+5` / `-5` (seconds),
+`+#15` / `-#15` (frames), `+2:30`, `+10%`. Or *base ± delta*: `00:00:05;17 + 2`.
+Every jump snaps to the nearest frame.
 
 **Keyboard** (while the inspector window is focused — the keys are relayed to IINA):
 `Space`/`k` play·pause · `←`/`→` seek ∓5 s · `j`/`l` ∓10 s · `,`/`.` frame step ·

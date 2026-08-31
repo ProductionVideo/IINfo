@@ -857,15 +857,30 @@
   });
 
   /* ============================================================ loops */
-  // loadFile() runs this webview before (and after) the window is ever shown.
-  // The plugin tells us when the inspector is actually open; until then we tick
-  // slowly just to stay warm. We do NOT use document.visibilityState — IINA
-  // reports "hidden" whenever the window isn't frontmost, which is most of the time.
-  var active = false;
-  iina.onMessage("iinfo-active", function (d) { active = !!(d && d.active); });
+  // main.js only keeps this page loaded while the inspector should be open (it
+  // swaps in blank.html on close). "visible" = the page is actually painting,
+  // which we detect from requestAnimationFrame still firing — reliable, unlike
+  // document.visibilityState (which reports hidden whenever we're not frontmost).
+  var lastRaf = performance.now();
+  function visible() { return performance.now() - lastRaf < 700; }
+
+  var hiddenSince = 0;
   function pollLoop() {
-    try { iina.postMessage("iinfo-poll"); } catch (e) {}
-    setTimeout(pollLoop, active ? 33 : 1000);       // ~30 Hz when open, 1 Hz when not
+    var vis = visible();
+    try { iina.postMessage("iinfo-poll", { visible: vis }); } catch (e) {}
+    if (!vis) {
+      if (!hiddenSince) hiddenSince = Date.now();
+      // invisible for 5 straight minutes -> it was closed (or buried); ask the
+      // plugin to swap us for a blank page, and idle hard until it does
+      if (Date.now() - hiddenSince > 300000) {
+        try { iina.postMessage("iinfo-shutdown"); } catch (e) {}
+        setTimeout(pollLoop, 30000);
+        return;
+      }
+    } else {
+      hiddenSince = 0;
+    }
+    setTimeout(pollLoop, vis ? 33 : 2500);   // ~30 Hz when on screen, ~0.4 Hz when not
   }
   setTimeout(pollLoop, 0);   // defer so the rest of this module is defined before the first frame arrives
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
@@ -876,7 +891,7 @@
   var prevT = performance.now();
   function frame(now) {
     requestAnimationFrame(frame);
-    if (!active) { prevT = now; return; }   // nothing on screen — skip the animation work
+    lastRaf = now;
     var dt = Math.min(0.1, (now - prevT) / 1000); prevT = now;
     animateMeters(dt, now);
     ORDER.forEach(function (kk) {
@@ -924,43 +939,82 @@
     else act("nudge", val);
   });
 
-  function doJump() {
-    var raw = $("jump").value.trim(); if (!raw) return;
-    var d = state.data, fps = d && d.time ? d.time.fps : null;
-    var m;
-    if ((m = raw.match(/^#(\d+(\.\d+)?)$/)) && fps) { act("seek-frame-abs", parseFloat(m[1])); return; }
-    // hh:mm:ss[:;.]ff|ms
-    m = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:[.,](\d+)|[:;](\d+))?$/);
-    if (m) {
-      var h = +(m[1] || 0), mi = +m[2], s = +m[3];
-      var sub = 0;
+  /* ---- Go field: absolute seeks + relative maths (see the input's title) ---- */
+  // parse a magnitude token (no leading sign) to seconds, in ctx {fps, duration}
+  function goUnit(tok, ctx) {
+    tok = tok.trim(); var m;
+    if ((m = tok.match(/^(\d+(?:\.\d+)?)\s*%$/))) return ctx.duration ? (parseFloat(m[1]) / 100) * ctx.duration : null;
+    if ((m = tok.match(/^#\s*(\d+(?:\.\d+)?)$/))) return ctx.fps ? parseFloat(m[1]) / ctx.fps : null;
+    if ((m = tok.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:[.,](\d{1,3})|[:;](\d{1,3}))?$/))) {
+      var h = +(m[1] || 0), mi = +m[2], s = +m[3], sub = 0;
       if (m[4] != null) sub = parseFloat("0." + m[4]);
-      else if (m[5] != null && fps) sub = (+m[5]) / fps;
-      act("seek-abs", h * 3600 + mi * 60 + s + sub);
+      else if (m[5] != null && ctx.fps) sub = (+m[5]) / ctx.fps;
+      return h * 3600 + mi * 60 + s + sub;
+    }
+    if ((m = tok.match(/^(\d+(?:\.\d+)?)\s*s?$/))) return parseFloat(m[1]);
+    return null;
+  }
+  function parseGo(input, ctx) {
+    input = input.trim().replace(/\s+/g, " ");
+    if (!input) return null;
+    var m, v;
+    if ((m = input.match(/^([+-])\s*(.+)$/))) {          // relative to current
+      v = goUnit(m[2], ctx);
+      return v == null ? null : ctx.pos + (m[1] === "-" ? -v : v);
+    }
+    if ((m = input.match(/^(.+?)\s*([+-])\s*(.+)$/))) {  // base ± delta
+      var base = goUnit(m[1], ctx), delta = goUnit(m[3], ctx);
+      if (base != null && delta != null) return base + (m[2] === "-" ? -delta : delta);
+    }
+    v = goUnit(input, ctx);                              // absolute
+    return v;
+  }
+  function doJump() {
+    var j = $("jump"), raw = j.value; if (!raw.trim()) return;
+    var t = state.data && state.data.time;
+    var ctx = { pos: (t && t.pos) || 0, fps: (t && t.fps) || null, duration: (t && t.duration) || null };
+    var target = parseGo(raw, ctx);
+    if (target == null || !isFinite(target)) {
+      j.classList.add("bad"); setTimeout(function () { j.classList.remove("bad"); }, 500);
       return;
     }
-    if ((m = raw.match(/^(\d+(\.\d+)?)s?$/))) { act("seek-abs", parseFloat(m[1])); }
+    target = Math.max(0, target);
+    if (ctx.duration) target = Math.min(target, ctx.duration - (ctx.fps ? 0.5 / ctx.fps : 0.01));
+    if (ctx.fps) target = (Math.round(target * ctx.fps) + 0.5) / ctx.fps;   // land on a frame
+    act("seek-abs", target);
+    // optimistic local update so hammering Enter compounds off the new point
+    if (t) { t.pos = target; if (t.fps) t.frame = Math.round(target * t.fps); }
   }
   $("b-jump").addEventListener("click", doJump);
   $("jump").addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Enter") doJump(); });
 
-  function fillJump(val) {
-    var j = $("jump");
-    j.value = val;
-    j.focus(); j.select();
+  function fillJump(val) { var j = $("jump"); j.value = val; j.focus(); j.select(); }
+
+  /* ---- copy / send the current timecode or frame ---- */
+  function copyText(s) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(s); return true; } } catch (e) {}
+    try {
+      var ta = el("textarea"); ta.value = s;
+      ta.style.cssText = "position:fixed;top:-9999px;opacity:0";
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      return true;
+    } catch (e) { return false; }
   }
-  // click the essentials timecode / frame -> drop it into the Go field to tweak.
-  // a plain click fills; a click that ends a text selection is left alone so you
-  // can still copy the value out by hand.
-  $("ess-tc").addEventListener("click", function (e) {
-    if (e.target.id === "tc-to-jump") { fillJump(curTC); return; }
-    if (!window.getSelection || !String(window.getSelection())) fillJump(curTC);
-  });
-  $("ess-frame").addEventListener("click", function (e) {
-    var d = state.data, n = d && d.time ? d.time.frame : null;
-    if (n == null) return;
-    if (e.target.id === "fr-to-jump") { fillJump("#" + Math.round(n)); return; }
-    if (!window.getSelection || !String(window.getSelection())) fillJump("#" + Math.round(n));
+  function flash(node, txt) {
+    var o = node.textContent; node.textContent = txt;
+    setTimeout(function () { node.textContent = o; }, 900);
+  }
+  function frameStr() {
+    var t = state.data && state.data.time;
+    return (t && t.frame != null) ? String(Math.round(t.frame)) : "";
+  }
+  $("ess-tc").parentNode.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-ess]"); if (!b) return;
+    var a = b.getAttribute("data-ess");
+    if (a === "copy-tc") { copyText(curTC); flash(b, "copied"); }
+    else if (a === "go-tc") { fillJump(curTC); }
+    else if (a === "copy-fr" && frameStr()) { copyText(frameStr()); flash(b, "copied"); }
+    else if (a === "go-fr" && frameStr()) { fillJump("#" + frameStr()); }
   });
 
   /* ---- keyboard: keep IINA's core playback controls working while this
@@ -984,8 +1038,10 @@
       if (e.key === "ArrowRight") { e.preventDefault(); act("frame-next"); return; }
       if (e.key === "J" || e.key === "j") { e.preventDefault(); act("nudge", -10); return; }
       if (e.key === "L" || e.key === "l") { e.preventDefault(); act("nudge", 10); return; }
+      if (e.key === "C" || e.key === "c") { e.preventDefault(); if (frameStr()) copyText(frameStr()); return; }
       return;
     }
+    if (e.key === "c") { e.preventDefault(); if (curTC) copyText(curTC); return; }
     var a = KEYS[e.key];
     if (!a) return;
     e.preventDefault();
