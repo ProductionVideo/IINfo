@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.0
+
+**A/B compare — line up two IINA windows and step them together, frame-accurately.**
+
+New *global entry* (`global.js`, loaded once at IINA startup) that tracks every
+open player window and coordinates a two-window comparison. **Quit and reopen
+IINA** after updating so it loads.
+
+- **A/B Compare panel** (off by default — enable it in Settings ▸ Panels).
+  Pick any two open windows as A and B; `Swap`, `Unlink`, `Refresh`.
+- **Frame offset** — nudge B ±1 / ±5 frames from A, `Reset`, or `Set current as
+  sync` to make wherever A and B sit right now the zero point. Frame-quantised,
+  shown as `B +2f`. A live **"B … off sync"** readout shows how far B has drifted
+  from that point.
+- **Link transport** — play/pause, frame step, seek and scrub then drive *both*
+  windows. Play/pause is sent as an explicit verb so the two never diverge, and
+  **every stop re-snaps A and B to exact frames** the offset apart. `Re-sync B`
+  does the same on demand.
+- **Different frame rates** are detected (`FPS MISMATCH`); the offset falls back
+  to elapsed-time.
+- Closing either window, or loading a different file into A/B, updates the pairing
+  cleanly and never leaves a dead window selectable.
+- Single-player behaviour is unchanged when the panel is off.
+
+Two independent mpv instances can't be sample-locked during playback, so ganged
+play is best-effort; the frame accuracy is in the paused / stepped / re-synced
+state. Internals: `lib/sync.js` + a `node --test` suite (`npm test`); see
+`DECISIONS.md`.
+
 ## 0.1.12
 
 **Fix — the real cause of the idle crash.** IINA stores each `onMessage` / menu /

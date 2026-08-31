@@ -12,7 +12,12 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
 
-console.log("IINfo: main entry loading (v0.1.12)");
+console.log("IINfo: main entry loading (v0.2.0)");
+
+// iina.global is present only when Info.json declares a "globalEntry". Every
+// A/B-compare code path below is a guarded no-op without it, so single-player
+// behaviour is untouched. All frame/offset maths lives in the global entry.
+const G = iina.global || null;
 
 const AF_LABEL = "iinfo";
 // asetnsamples forces a predictable ~21 ms analysis window (1024 @ 48k) regardless
@@ -29,22 +34,32 @@ let afWanted = false;      // does the webview want metering right now?
 let lastConfig = null;     // last config object received from the webview (for persistence)
 let lastContact = 0;       // Date.now() of the last message from the webview
 let fileGen = 0;           // bumped on every file load; lets the webview reset its buffers
+let lastBeatSent = 0;      // Date.now() of the last iinfo/beat to the global entry
+let alive = true;          // false once mpv is tearing down — STOP calling into it
+                           // (a timer callback hitting a freed mpv handle segfaults,
+                           //  and native crashes aren't catchable by try/catch)
 
 /* ------------------------------------------------------------------ helpers */
 
+// every mpv read goes through these — one `alive` gate keeps a stray timer /
+// poll from calling into a freed mpv handle during window teardown (segfault)
 function num(name) {
+  if (!alive) return null;
   try { const v = mpv.getNumber(name); return typeof v === "number" && isFinite(v) ? v : null; }
   catch (e) { return null; }
 }
 function str(name) {
+  if (!alive) return null;
   try { const v = mpv.getString(name); return v == null || v === "" ? null : v; }
   catch (e) { return null; }
 }
 function flag(name) {
+  if (!alive) return null;
   try { const v = mpv.getFlag(name); return typeof v === "boolean" ? v : null; }
   catch (e) { return null; }
 }
 function native(name) {
+  if (!alive) return null;
   try { const v = mpv.getNative(name); return v == null ? null : v; }
   catch (e) { return null; }
 }
@@ -114,9 +129,11 @@ function snapshotMeta() {
 }
 
 function tryRemove() {
+  if (!alive) return;
   try { mpv.command("af", ["remove", "@" + AF_LABEL]); } catch (e) {}
 }
 function tryAdd() {
+  if (!alive) return false;
   try {
     mpv.command("af", ["add", AF_GRAPH]);
     afActive = true;
@@ -159,6 +176,41 @@ function teardownFilter() {
   if (filterPresent()) tryRemove();
   afActive = false;
   armedGen = -1;
+}
+
+/* ---------------------------------------------------------------- transport
+ *
+ * One place that turns a transport verb into an mpv/core call. Used by the
+ * webview's own controls (iinfo-action) AND, when this window is ganged as A or
+ * B, by the global entry (iinfo/gang-exec). Same code either way.
+ */
+function runAction(type, value) {
+  if (!alive) return;
+  const fr = () => num("container-fps") || num("estimated-vf-fps");
+  try {
+    switch (type) {
+      case "frame-next":     mpv.command("frame-step", []); break;
+      case "frame-prev":     mpv.command("frame-back-step", []); break;
+      case "frame-jump": {
+        const n = Math.round(value || 0), f = num("estimated-frame-number"), rate = fr();
+        if (n === 0) break;
+        if (f != null && rate) core.seekTo((Math.max(0, f + n) + 0.5) / rate);
+        else if (rate) core.seek(n / rate, true);
+        break;
+      }
+      case "toggle-pause":   flag("pause") ? core.resume() : core.pause(); break;
+      case "play":           core.resume(); break;
+      case "pause":          core.pause(); break;
+      case "screenshot":     mpv.command("screenshot", ["video"]); core.osd("IINfo: exact-frame screenshot saved"); break;
+      case "seek-abs":       if (typeof value === "number") core.seekTo(value); break;
+      case "seek-rel":       if (typeof value === "number") core.seek(value, false); break;
+      case "nudge":          if (typeof value === "number") core.seek(value, true); break;
+      case "seek-start":     core.seekTo(0); break;
+      case "seek-end":       { const d = num("duration"); if (d) core.seekTo(Math.max(0, d - 0.05)); break; }
+      case "mute":           mpv.command("cycle", ["mute"]); break;
+      case "speed-mult":     if (typeof value === "number") mpv.command("multiply", ["speed", String(value)]); break;
+    }
+  } catch (e) { console.log("IINfo action error: " + e); }
 }
 
 /* --------------------------------------------------------- data collection */
@@ -303,6 +355,11 @@ function collect() {
       error: (afWanted && !afActive) ? (afError || "") : "",
       raw: afMeta,
     },
+
+    /* A/B compare — null unless the global entry is loaded and has broadcast */
+    compare: lastCompare
+      ? { state: lastCompare.state, players: lastCompare.players, myId: myId }
+      : null,
   };
 }
 
@@ -317,20 +374,34 @@ function collect() {
 // so wireMessages() must run *after* each loadFile(), not once at plugin start.
 let webviewLoaded = false;
 
+// Every standalone-window message callback is held here so JavaScriptCore's GC
+// can't collect it. IINA's message hub calls `callback.value` with no nil-check;
+// once the JSManagedValue is collected the next webview message is a SIGTRAP
+// (the "idle crash", and it recurs under the heavier A/B message traffic).
+// loadFile() clears IINA's listener list, so wireMessages() re-runs on every
+// open — reset the array first so stale closures don't pile up.
+const WIN_PINS = [];
+function onWin(name, fn) { WIN_PINS.push(fn); standaloneWindow.onMessage(name, fn); }
+
 function wireMessages() {
-  standaloneWindow.onMessage("iinfo-ready", () => {
+  WIN_PINS.length = 0;
+
+  onWin("iinfo-ready", () => {
     lastContact = Date.now();
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
-  standaloneWindow.onMessage("iinfo-poll", () => {
+  onWin("iinfo-poll", () => {
     lastContact = Date.now();
+    // while an inspector is open, beat a few times a second so the global
+    // registry (and the other window's compare readout) stays responsive
+    if (G && Date.now() - lastBeatSent > 250) { lastBeatSent = Date.now(); gBeat(); }
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
   // sent from pagehide — the user closed the window with the red title-bar button
-  standaloneWindow.onMessage("iinfo-closing", () => {
+  onWin("iinfo-closing", () => {
     if (!wantWindow) return;
     wantWindow = false;
     teardownFilter();
@@ -338,7 +409,7 @@ function wireMessages() {
     console.log("IINfo: inspector closed (from window)");
   });
 
-  standaloneWindow.onMessage("iinfo-config", (cfg) => {
+  onWin("iinfo-config", (cfg) => {
     lastConfig = cfg;
     // preferences.set alone only persists to disk when a prefs page closes —
     // sync() forces the flush so panel visibility + display settings survive a restart
@@ -348,33 +419,23 @@ function wireMessages() {
     afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
   });
 
-  standaloneWindow.onMessage("iinfo-action", (a) => {
+  onWin("iinfo-action", (a) => {
     if (!a || !a.type) return;
-    const fr = () => num("container-fps") || num("estimated-vf-fps");
-    try {
-      switch (a.type) {
-        case "frame-next":     mpv.command("frame-step", []); break;
-        case "frame-prev":     mpv.command("frame-back-step", []); break;
-        case "frame-jump": {
-          const n = Math.round(a.value || 0), f = num("estimated-frame-number"), rate = fr();
-          if (n === 0) break;
-          if (f != null && rate) core.seekTo((Math.max(0, f + n) + 0.5) / rate);
-          else if (rate) core.seek(n / rate, true);
-          break;
-        }
-        case "toggle-pause":   flag("pause") ? core.resume() : core.pause(); break;
-        case "screenshot":     mpv.command("screenshot", ["video"]); core.osd("IINfo: exact-frame screenshot saved"); break;
-        case "seek-abs":       if (typeof a.value === "number") core.seekTo(a.value); break;
-        case "seek-rel":       if (typeof a.value === "number") core.seek(a.value, false); break;
-        case "nudge":          if (typeof a.value === "number") core.seek(a.value, true); break;
-        case "seek-start":     core.seekTo(0); break;
-        case "seek-end":       { const d = num("duration"); if (d) core.seekTo(Math.max(0, d - 0.05)); break; }
-        case "mute":           mpv.command("cycle", ["mute"]); break;
-        case "speed-mult":     if (typeof a.value === "number") mpv.command("multiply", ["speed", String(a.value)]); break;
-      }
-    } catch (e) { console.log("IINfo action error: " + e); }
+    runAction(a.type, a.value);
     // push a fresh frame right after an action so the UI updates immediately
     standaloneWindow.postMessage("iinfo-data", collect());
+  });
+
+  // A/B compare: the webview drives it, main.js just relays to the global entry.
+  // "iinfo-gang" = a transport verb to fan out to both A and B; "iinfo-compare-cmd"
+  // = assign / swap / offset / sync control.
+  onWin("iinfo-gang", (cmd) => {
+    lastContact = Date.now();
+    if (G && cmd && cmd.action) { try { G.postMessage("iinfo/gang", cmd); } catch (e) {} }
+  });
+  onWin("iinfo-compare-cmd", (cmd) => {
+    lastContact = Date.now();
+    if (G && cmd && cmd.op) { try { G.postMessage("iinfo/compare-cmd", cmd); } catch (e) {} }
   });
 }
 
@@ -475,6 +536,7 @@ function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log
 
 on("iina.file-loaded", () => {
   fileGen++;
+  if (G) gHello();   // path / fps / duration may all have changed
   if (wantWindow) standaloneWindow.postMessage("iinfo-data", collect());
 });
 on("mpv.audio-params.changed", () => {
@@ -482,6 +544,56 @@ on("mpv.audio-params.changed", () => {
   if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
 });
 on("mpv.end-file", () => { freshGen = -1; });
+
+/* ------------------------------------------------------- A/B compare (global)
+ *
+ * Register this window with the global entry so it can appear as an A/B
+ * candidate, answer state requests, and run ganged transport. All no-ops when
+ * there is no global entry (iina.global undefined).
+ */
+let myId = null;
+let lastCompare = null;
+
+function gMeta() {
+  const fps = num("container-fps") || num("estimated-vf-fps");
+  const vp = native("video-params") || {};
+  return {
+    path: str("path"), filename: str("filename"),
+    w: vp.w || null, h: vp.h || null,
+    fps: fps, duration: num("duration"),
+    pos: num("time-pos"), frame: num("estimated-frame-number"), paused: flag("pause"),
+  };
+}
+function gSend(name, data) { if (!G) return; try { G.postMessage(name, data); } catch (e) {} }
+function gHello() { gSend("iinfo/hello", gMeta()); }
+function gBeat()  { gSend("iinfo/beat", { pos: num("time-pos"), frame: num("estimated-frame-number"), paused: flag("pause") }); }
+
+if (G) {
+  try {
+    G.onMessage("iinfo/you-are", pin((d) => { if (d && d.id != null) myId = String(d.id); }));
+    G.onMessage("iinfo/compare", pin((d) => { lastCompare = d && d.state ? d : null; }));
+    G.onMessage("iinfo/gang-exec", pin((d) => {
+      if (!d || !d.action || !alive) return;
+      runAction(d.action, d.value);
+      gBeat();   // report the new position so the global entry can align off it
+    }));
+    console.log("IINfo: A/B compare wired to global entry");
+  } catch (e) { console.log("IINfo: global wiring — " + e); }
+
+  // defer the first hello: if it lands synchronously during this player's own
+  // plugin init, the global entry's reply postMessage trips a force-unwrap in
+  // IINA and traps the process
+  if (typeof setTimeout === "function") setTimeout(gHello, 0); else gHello();
+
+  let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
+  const goodbye = () => {
+    alive = false;                       // stop every mpv read from here on
+    try { clearInterval(beatTimer); } catch (e) {}
+    gSend("iinfo/bye", {});
+  };
+  on("mpv.shutdown", goodbye);
+  on("iina.window-did-close", goodbye);
+}
 on("iina.window-will-close", () => {
   // This also fires on transient player-window teardown (playback stops, some
   // file jumps) where the inspector is still open — so do NOT clear wantWindow
@@ -498,7 +610,7 @@ on("iina.window-will-close", () => {
 // so the moment polls resume tickFilter() puts the filter back on its own.
 setInterval(() => {
   try {
-    if (wantWindow && afActive && lastContact && Date.now() - lastContact > 8000) {
+    if (alive && wantWindow && afActive && lastContact && Date.now() - lastContact > 8000) {
       teardownFilter();
       console.log("IINfo: webview quiet — filter parked");
     }

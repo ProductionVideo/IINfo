@@ -566,7 +566,162 @@
       } };
   })();
 
-  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
+  // -- A/B Compare ------------------------------------------------------
+  function cmpOffsetLabel(s) {
+    if (!s) return "";
+    if ((s.mode || "frame-offset") === "frame-offset" && s.offsetFrames != null) {
+      if (!s.offsetFrames) return "B ±0f";
+      return "B " + (s.offsetFrames > 0 ? "+" : "−") + Math.abs(s.offsetFrames) + "f";
+    }
+    var v = s.offsetSec || 0, sign = v < 0 ? "−" : "+";
+    return "B " + sign + Math.abs(v).toFixed(2) + "s";
+  }
+  P.compare = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "A/B Compare"));
+    var badges = el("span", "tag cmp-badges");
+    h.appendChild(badges);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    var unavail = el("div", "hint",
+      "Compare needs the IINfo global entry — quit and reopen IINA after updating the plugin.");
+    body.appendChild(unavail);
+
+    var wrap = el("div", "cmp");
+
+    function cmd(o) { try { iina.postMessage("iinfo-compare-cmd", o); } catch (e) {} }
+    function myId() { return state.compare && state.compare.myId; }
+
+    function slotRow(slot) {
+      var row = el("div", "cmp-slot");
+      row.appendChild(el("span", "cmp-tag", slot));
+      var sel = el("select", "cmp-sel");
+      sel.addEventListener("change", function () { cmd({ op: "assign", slot: slot, id: sel.value || null }); });
+      row.appendChild(sel);
+      var use = el("button", "btn xs", "this window");
+      use.addEventListener("click", function () { if (myId()) cmd({ op: "assign", slot: slot, id: myId() }); });
+      row.appendChild(use);
+      return { row: row, sel: sel, use: use };
+    }
+    var A = slotRow("A"), B = slotRow("B");
+    wrap.appendChild(A.row); wrap.appendChild(B.row);
+
+    var r1 = el("div", "cmp-row");
+    [["Swap", "swap"], ["Unlink", "unlink"], ["Refresh", "refresh"]].forEach(function (o) {
+      var b = el("button", "btn xs", o[0]);
+      b.addEventListener("click", function () { cmd({ op: o[1] }); });
+      r1.appendChild(b);
+    });
+    wrap.appendChild(r1);
+
+    var offRow = el("div", "cmp-row");
+    var offVal = el("span", "cmp-off mono", "B ±0f");
+    offRow.appendChild(offVal);
+    [["−5f", -5], ["−1f", -1], ["+1f", 1], ["+5f", 5]].forEach(function (o) {
+      var b = el("button", "btn xs mono", o[0]);
+      b.addEventListener("click", function () { cmd({ op: "offset-frames", delta: o[1] }); });
+      offRow.appendChild(b);
+    });
+    wrap.appendChild(offRow);
+
+    var syncRow = el("div", "cmp-row");
+    var bSync = el("button", "btn xs", "Set current as sync");
+    bSync.title = "Take B's current distance from A as the zero offset";
+    bSync.addEventListener("click", function () { cmd({ op: "set-sync" }); });
+    var bReset = el("button", "btn xs", "Reset");
+    bReset.title = "Zero the offset — B lines back up with A";
+    bReset.addEventListener("click", function () { cmd({ op: "offset-reset" }); });
+    syncRow.appendChild(bSync);
+    syncRow.appendChild(bReset);
+    wrap.appendChild(syncRow);
+
+    var linkRow = el("div", "cmp-row");
+    var linkLab = el("label", "cmp-link");
+    var linkCb = el("input"); linkCb.type = "checkbox";
+    linkCb.addEventListener("change", function () { cmd({ op: linkCb.checked ? "link" : "unlink" }); });
+    linkLab.appendChild(linkCb);
+    linkLab.appendChild(el("span", null, "Link transport"));
+    linkRow.appendChild(linkLab);
+    var deltaVal = el("span", "cmp-delta mono", "");
+    linkRow.appendChild(deltaVal);
+    wrap.appendChild(linkRow);
+
+    body.appendChild(wrap);
+    p.appendChild(body);
+
+    function optLabel(pl) {
+      var name = pl.filename || (pl.path ? String(pl.path).split("/").pop() : ("player " + pl.id));
+      var bits = [];
+      if (pl.w && pl.h) bits.push(pl.w + "×" + pl.h);
+      if (pl.fps) bits.push(Number(pl.fps).toFixed(3));
+      return name + (bits.length ? "  ·  " + bits.join(" · ") : "");
+    }
+    function fillSel(sel, players, current) {
+      var sig = players.map(function (x) { return x.id + ":" + optLabel(x); }).join("|") + "=" + (current || "");
+      if (sel._sig === sig) return;
+      sel._sig = sig;
+      sel.textContent = "";
+      var none = el("option", null, "— none —"); none.value = ""; sel.appendChild(none);
+      players.forEach(function (pl) {
+        var o = el("option", null, optLabel(pl));
+        o.value = pl.id;
+        if (String(pl.id) === String(current)) o.selected = true;
+        sel.appendChild(o);
+      });
+      if (current == null || current === "") none.selected = true;
+    }
+
+    return {
+      key: "compare", title: "A/B Compare", def: false, el: p,
+      update: function (d) {
+        var c = d.compare;
+        if (!c || !c.state) { unavail.hidden = false; wrap.hidden = true; badges.textContent = ""; return; }
+        unavail.hidden = true; wrap.hidden = false;
+        var s = c.state, players = c.players || [];
+
+        fillSel(A.sel, players, s.aId);
+        fillSel(B.sel, players, s.bId);
+        A.use.hidden = !c.myId || String(c.myId) === String(s.aId);
+        B.use.hidden = !c.myId || String(c.myId) === String(s.bId);
+
+        offVal.textContent = cmpOffsetLabel(s);
+        if (linkCb.checked !== !!s.linked) linkCb.checked = !!s.linked;
+
+        var paired = !!(s.aId && s.bId);
+
+        // B's live distance from the sync point (A + offset)
+        var fpsB = null;
+        players.forEach(function (pl) { if (String(pl.id) === String(s.bId)) fpsB = pl.fps; });
+        var dl = c.delta;
+        var offGrid = paired && dl != null && Math.abs(dl) > (fpsB ? 1.5 / fpsB : 0.05);
+        if (dl == null || !paired) { deltaVal.textContent = ""; deltaVal.className = "cmp-delta mono"; }
+        else if (Math.abs(dl) < (fpsB ? 0.5 / fpsB : 0.02)) {
+          deltaVal.textContent = "B in sync"; deltaVal.className = "cmp-delta mono good";
+        } else {
+          var fr = fpsB ? Math.round(dl * fpsB) : null;
+          deltaVal.textContent = "B " + (dl >= 0 ? "+" : "−")
+            + (fr != null ? Math.abs(fr) + "f off" : Math.abs(dl).toFixed(2) + "s off");
+          deltaVal.className = "cmp-delta mono" + (offGrid ? " bad" : "");
+        }
+
+        var bd = [];
+        if (s.linked) bd.push(["LINKED", "good"]);
+        else if (paired) bd.push(["READY", ""]);
+        if (paired) bd.push([cmpOffsetLabel(s), ""]);
+        if (s.fpsMismatch) bd.push(["FPS MISMATCH", "warn"]);
+        if (offGrid) bd.push(["OUT OF SYNC", "bad"]);
+        var sig = bd.map(function (x) { return x.join(""); }).join("|");
+        if (badges._sig !== sig) {
+          badges._sig = sig; badges.textContent = "";
+          bd.forEach(function (x) { badges.appendChild(el("span", "chip" + (x[1] ? " " + x[1] : ""), x[0])); });
+        }
+      },
+    };
+  })();
+
+  var ORDER = ["compare", "timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -595,7 +750,7 @@
   var SIZES = [["1", "Small"], ["1.15", "Normal"], ["1.3", "Large"], ["1.5", "XL"], ["1.75", "XXL"], ["2.1", "Huge"]];
 
   var state = {
-    panels: {}, data: null, gen: null, win: null,
+    panels: {}, data: null, gen: null, win: null, compare: null,
     settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15" },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
@@ -819,6 +974,8 @@
       $("scrub-cache").style.width = (cf * 100) + "%";
     }
 
+    document.body.classList.toggle("ganged", ganged());
+
     ORDER.forEach(function (kk) {
       if (!state.panels[kk]) return;
       try { P[kk].update(d); } catch (e) { /* keep other panels alive */ }
@@ -848,6 +1005,7 @@
       resetForNewFile();
     }
     state.data = d;
+    state.compare = d.compare || null;
     lastBeat = now;
 
     // the plugin only marks metering `fresh` once the data provably belongs to
@@ -914,7 +1072,22 @@
   });
   $("b-pause").innerHTML = ICONS.play;
 
-  function act(type, value) { iina.postMessage("iinfo-action", { type: type, value: value }); }
+  // when A and B are linked, transport verbs fan out to both players via the
+  // global entry; otherwise they hit this window's own player as before
+  function ganged() {
+    return !!(state.compare && state.compare.state && state.compare.state.linked);
+  }
+  function act(type, value) {
+    if (!ganged()) { iina.postMessage("iinfo-action", { type: type, value: value }); return; }
+    // resolve state-dependent verbs to an explicit one here, from what we know of
+    // our own player, so both windows always land in the SAME state
+    if (type === "toggle-pause") {
+      var paused = state.data && state.data.file && state.data.file.paused;
+      iina.postMessage("iinfo-gang", { action: paused ? "play" : "pause" });
+      return;
+    }
+    iina.postMessage("iinfo-gang", { action: type, value: value });
+  }
   $("b-start").addEventListener("click", function () { act("seek-start"); });
   $("b-end").addEventListener("click", function () { act("seek-end"); });
   $("b-prev").addEventListener("click", function () { act("frame-prev"); });
@@ -1044,9 +1217,18 @@
 
   /* ---- scrub bar ---- */
   var scrub = $("scrub"), scrubbing = false, lastSeek = 0;
+  // WKWebView reports pointer clientX scaled by the page `zoom` (our text-size
+  // setting) but getBoundingClientRect() unscaled — divide clientX back down so
+  // the two are in the same space, else the mapping drifts along the bar.
+  function pageZoom() {
+    var z = parseFloat(document.documentElement.style.zoom);
+    if (!(z > 0)) z = parseFloat(getComputedStyle(document.documentElement).zoom);
+    return (z > 0 && isFinite(z)) ? z : 1;
+  }
+  function scrubX(clientX) { return clientX / pageZoom() - scrub.getBoundingClientRect().left; }
   function scrubFrac(clientX) {
-    var r = scrub.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    var w = scrub.getBoundingClientRect().width;
+    return Math.max(0, Math.min(1, scrubX(clientX) / w));
   }
   function scrubSeek(clientX, force) {
     var d = state.data; if (!d || !d.time || d.time.duration == null) return;
@@ -1061,17 +1243,25 @@
     var frac = scrubFrac(clientX), t = frac * d.time.duration;
     var tip = $("scrub-tip");
     tip.textContent = clock(t);
-    var r = scrub.getBoundingClientRect();
-    tip.style.left = Math.max(20, Math.min(r.width - 20, clientX - r.left)) + "px";
+    var w = scrub.getBoundingClientRect().width;
+    tip.style.left = Math.max(20, Math.min(w - 20, scrubX(clientX))) + "px";
+  }
+  // move the fill + head to the cursor immediately — applyData() freezes them
+  // while dragging (waiting for the real position), which otherwise leaves the
+  // head far behind the pointer
+  function paintScrub(frac) {
+    $("scrub-fill").style.width = (frac * 100) + "%";
+    $("scrub-head").style.left = (frac * 100) + "%";
   }
   scrub.addEventListener("pointerdown", function (e) {
     scrubbing = true; scrub.classList.add("dragging");
     try { scrub.setPointerCapture(e.pointerId); } catch (err) {}
+    paintScrub(scrubFrac(e.clientX));
     scrubSeek(e.clientX, true); scrubTip(e.clientX);
   });
   scrub.addEventListener("pointermove", function (e) {
     scrubTip(e.clientX);
-    if (scrubbing) scrubSeek(e.clientX, false);
+    if (scrubbing) { paintScrub(scrubFrac(e.clientX)); scrubSeek(e.clientX, false); }
   });
   function endScrub(e) {
     if (!scrubbing) return;

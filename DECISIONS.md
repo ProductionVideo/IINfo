@@ -1,0 +1,120 @@
+# Engineering Decision Log
+
+Short record of architectural choices — especially dependencies, frame/time
+representation, cross-window communication, sync strategy, persistence, and
+FFmpeg/mpv filter use. Newest first.
+
+---
+
+## A/B Compare (v0.2.0)
+
+### Cross-window coordination → IINA global entry, not a "leader" player
+
+**Problem:** A/B compare needs state shared across two IINA player windows. Each
+window has its own `main.js` instance with no shared memory.
+
+**Options:** (a) elect one window as coordinator and have the other talk to it via
+some side channel; (b) IINA's global entry (`globalEntry` in Info.json) — a single
+JS context loaded at app start that can address every window's `main.js` by id.
+
+**Chosen:** (b). It is IINA's only real cross-window channel, it outlives any
+single window closing, and it needs no election / hand-off logic. Cost: an
+always-on background context (negligible) and a required IINA restart to load it.
+
+### Frame/time representation → integer frame offset + rational fps, elapsed fallback
+
+`lib/sync.js` holds the offset as an integer `offsetFrames` plus the rational fps
+(`rationalize()` snaps 23.976/29.97/59.94 to their exact `n/1001` form).
+`offsetSec` is *derived* each time, never accumulated — hammering `+1f` ten times
+gives exactly `10 / fps`, not ten floating adds. When fps is unknown or A/B
+differ, `mode` switches to `"elapsed"` and the offset is a raw seconds delta
+(± buttons step by `1/fpsB`). `timeToFrame` is `floor(t·fps)`, the exact inverse
+of the frame-centre `frameToTime`.
+
+### Playback drift → snap on stop, no background watch
+
+Two independent mpv instances can't be sample-locked during playback, so ganged
+play is explicitly best-effort. The frame accuracy lives in the *stopped* state:
+every ganged `pause` (and `Re-sync B`, and any offset change while linked) runs
+`alignBoth()` — read A's position, snap A to its exact frame, seek B to that
+frame ± the offset, also frame-exact. A live "B … off sync" readout (from the
+~4 Hz beats) shows drift between snaps. The earlier always-on 2 s drift-watch
+round-trip was removed — it added constant IPC noise and a persistent failure
+surface for no real benefit over snap-on-stop.
+
+### Offset UI → Set-as-sync + Reset, no "Re-sync"
+
+Two buttons, not three. **Set current as sync** captures B's current distance
+from A as the zero offset; **Reset** zeroes it (B lines back up with A). A
+standalone "Re-sync B" (snap to A + current offset) tested as confusing — its
+job is already covered by the automatic align-on-pause plus the live "B ±Nf off"
+readout, so it was dropped.
+
+### Stop touching mpv during teardown → `alive` gate
+
+A timer callback that calls `mpv.getNumber` on a freed mpv handle segfaults, and
+a native crash is not catchable from JS. Every mpv read in `main.js` goes through
+`num`/`str`/`flag`/`native`, which now return `null` once `alive` is false;
+`alive` flips on `mpv.shutdown` / `iina.window-did-close`, which also
+`clearInterval`s the beat timer.
+
+### Ganged play/pause → explicit verbs, never a toggle
+
+`toggle-pause` flips each player relative to *its own* state, so if A and B
+weren't already identical, one ends up playing while the other pauses. The
+inspector resolves the button to an explicit `play` / `pause` from its own known
+state and the global entry relays that same verb to both — they always converge.
+
+### IINA global-entry IPC — the constraints we hit
+
+Discovered by testing in live IINA 1.4.4 (all undocumented):
+
+1. **`require()` doesn't return `module.exports`.** It loads the file and hands
+   back `undefined`. `lib/sync.js` is therefore *inlined* verbatim into
+   `global.js` (and `main.js` doesn't need it). `lib/sync.js` stays as the
+   `npm test` target; `test/global-inline.test.js` asserts the copy matches.
+2. **`global.postMessage(target, …)` only reaches plugin-*created* players when
+   `target` is `null` or a number.** For user-opened windows the only thing that
+   routes is a **string** target (matched against `PlayerCore.label`). The label
+   is exactly the sender id `onMessage` gives us, so we address windows by it.
+3. **child→parent delivery is synchronous.** If the global entry posts back to a
+   player from inside a message handler that a player triggered (e.g. replying to
+   a `hello` sent during that player's own init), IINA force-unwraps
+   `pc.plugins.first{…}` on the not-yet-wired player and **traps the whole
+   process**. Every global→player send is wrapped in `defer()` (`setTimeout 0`).
+4. **`onMessage` callbacks only see bindings reachable from init code.** A
+   top-level `let`/function referenced only from other callbacks throws "Can't
+   find variable" when the callback runs (hit this with `statePromises`, then
+   again with the handler functions themselves via one-line shims). Fix: the
+   **entire controller is one IIFE closure** and handlers are registered by
+   name (`onMsg("iinfo/gang", onGang)`, never `function(c){ onGang(c) }`).
+5. **No state round-trips.** An earlier design had the global entry ask each
+   player for its position and wait for the reply (`report-state` /
+   `iinfo/state`). That reply handler was the thing constantly hitting #4, and
+   the pattern is fragile regardless. A and B positions now come straight from
+   the ~4 Hz beats already in the registry — Set-as-sync / Re-sync / align read
+   `players[id].pos` and never wait. `main.js` fires an extra beat right after
+   every `gang-exec` so the registry is fresh before the debounced align runs.
+
+### No bundler
+
+`lib/sync.js` is a CommonJS module loaded by `main.js` / `global.js` via IINA's
+`require()` and by `node --test`. Two small modules don't justify a build step or
+a committed `dist/`. If `require()` proves unreliable inside IINA, each entry
+carries a tiny inline fallback for the functions it needs (`global.js` already
+does).
+
+### Compare UI → a panel in the existing inspector, not a second window
+
+Reuses the ~25 Hz poll pipeline (`d.compare` rides the existing data payload),
+the panel system, the visual language, and per-window lifecycle. A second
+standalone window would double the window-management + crash surface.
+
+### Deferred: QC markers → sidecar JSON
+
+Not built in v0.2.0. When it lands: `<mediafile>.iinfo.json` next to the media
+(survives reopen, travels with the file, reproducible reports), falling back to
+the plugin data dir on read-only volumes. Event schema designed up front so
+auto-generated QC events share it:
+`{ id, type, source, tMs, frame, tc, durMs?, category, note, severity, resolved,
+ref?, meta }`.
