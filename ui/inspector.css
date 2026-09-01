@@ -52,6 +52,7 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
+[hidden] { display: none !important; }
 /* readouts stay selectable so a value can be copied out */
 .ess-tc, .ess-frame, .kv dt, .kv dd, .panel .body, dialog textarea,
 input, .cap, .meter-val, .meter-label {
@@ -208,6 +209,23 @@ body {
 }
 .scrub:hover .scrub-tip, .scrub.dragging .scrub-tip { opacity: 1; }
 
+/* QC markers laid over the scrub bar */
+.scrub-marks { position: absolute; left: 0; right: 0; top: 50%; height: 0; pointer-events: none; }
+.scrub-mark {
+  position: absolute; top: 0; transform: translate(-50%, -50%);
+  width: 3px; height: 12px; border-radius: 2px; background: var(--faint);
+  border: 1px solid var(--panel); pointer-events: auto; cursor: pointer;
+}
+.scrub-mark.sev-info { background: var(--accent); }
+.scrub-mark.sev-warning { background: var(--warn); }
+.scrub-mark.sev-error { background: var(--bad); }
+.scrub-mark:hover { height: 16px; }
+.scrub-mark.sel { height: 18px; width: 4px; box-shadow: 0 0 0 1px var(--text); }
+.scrub-mark.cluster {
+  width: auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  font-family: var(--mono); font-size: 9px; line-height: 12px; color: var(--bg); text-align: center;
+}
+
 /* ================= scroll area ================= */
 main {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
@@ -333,3 +351,36 @@ body.stale .essentials, body.stale main { opacity: .45; }
 /* transport bar picks up an accent frame while it is driving both players */
 body.ganged .controls .seg-group,
 body.ganged .jump input { border-color: var(--accent); }
+
+/* ================= QC markers panel ================= */
+.qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.qc-filter { flex: 0 1 120px; height: 26px; }
+.qc-export-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 10px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+}
+
+.qc-list { display: flex; flex-direction: column; }
+.qc-row {
+  display: flex; align-items: baseline; gap: 8px; padding: 6px 4px;
+  border-top: 1px solid var(--border); flex-wrap: wrap;
+}
+.qc-row:first-child { border-top: 0; }
+.qc-row.sel { box-shadow: inset 2px 0 0 var(--accent); border-radius: 2px; }
+.qc-row.done .qc-main { opacity: .5; }
+.qc-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; background: var(--faint); }
+.qc-dot.info { background: var(--accent); }
+.qc-dot.warning { background: var(--warn); }
+.qc-dot.error { background: var(--bad); }
+.qc-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; cursor: pointer; }
+.qc-tc { color: var(--text); font-size: 12px; }
+.qc-sub { color: var(--faint); font-size: 11px; }
+.qc-note { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.qc-tools { display: inline-flex; gap: 4px; flex: none; }
+.qc-edit { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; padding: 6px 0 2px 16px; }
+.qc-note-in {
+  width: 100%; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px;
+}
+.qc-note-in:focus { outline: none; border-color: var(--accent); }
+.qc-edit-row { display: flex; gap: 6px; align-items: center; }
