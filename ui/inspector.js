@@ -2,6 +2,7 @@
   "use strict";
   var iina = window.iina;
   var QCE = window.QCEvents;   // pure QC event model (ui/events.js)
+  var ABTech = window.ABTech; // pure A/B technical comparison (ui/abtech.js)
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
   function cssVar(name, fallback) {
@@ -851,10 +852,96 @@
     };
   })();
 
+  // -- A/B Technical Diff ------------------------------------------------------
+  P.abtech = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "A/B Technical Diff"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    var hint = el("div", "hint", "");
+    body.appendChild(hint);
+
+    var ctrl = el("div", "cmp-row");
+    var onlyRow = el("label", "cmp-link");
+    var onlyCb = el("input"); onlyCb.type = "checkbox";
+    onlyCb.addEventListener("change", function () {
+      state.settings.abtechDiffOnly = onlyCb.checked;
+      pushConfig(); render();
+    });
+    onlyRow.appendChild(onlyCb);
+    onlyRow.appendChild(el("span", null, "Differences only"));
+    ctrl.appendChild(onlyRow);
+    body.appendChild(ctrl);
+
+    var table = el("div", "abtable");
+    body.appendChild(table);
+    p.appendChild(body);
+
+    var lastData = null, sig = "";
+
+    function techOf(id) {
+      var pls = (lastData && lastData.compare && lastData.compare.players) || [];
+      for (var i = 0; i < pls.length; i++) if (String(pls[i].id) === String(id)) return pls[i].tech || null;
+      return null;
+    }
+    function say(msg) { hint.hidden = false; hint.textContent = msg; ctrl.hidden = true; table.hidden = true; badge.textContent = ""; }
+
+    function render() {
+      var c = lastData && lastData.compare, s = c && c.state;
+      if (!c || !s) { say("A/B Compare needs the IINfo global entry — quit and reopen IINA."); return; }
+      if (!s.aId || !s.bId) { say("Assign A and B in the A/B Compare panel."); return; }
+      if (String(s.aId) === String(s.bId)) { say("A and B are the same window."); return; }
+      var rows = ABTech.rows(techOf(s.aId), techOf(s.bId));
+      if (!rows) { say("Reading technical metadata…"); return; }
+
+      hint.hidden = true; ctrl.hidden = false; table.hidden = false;
+      var n = ABTech.diffCount(rows);
+      badge.textContent = n ? (n + (n === 1 ? " difference" : " differences")) : "matched";
+      badge.className = "tag" + (n ? " diff" : " ok");
+
+      var only = !!state.settings.abtechDiffOnly;
+      var view = only ? rows.filter(function (r) { return r.differ; }) : rows;
+      var ns = n + "|" + only + "|" + view.map(function (r) { return r.key + r.a + r.b + (r.differ ? "!" : ""); }).join(",");
+      if (ns === sig) return;
+      sig = ns;
+
+      table.textContent = "";
+      var hr = el("div", "abrow abhead");
+      hr.appendChild(el("span", "ab-l", ""));
+      hr.appendChild(el("span", "ab-a", "A"));
+      hr.appendChild(el("span", "ab-b", "B"));
+      table.appendChild(hr);
+      if (only && !view.length) { table.appendChild(el("div", "hint", "No technical differences.")); return; }
+      view.forEach(function (r) {
+        var row = el("div", "abrow" + (r.differ ? " diff" : "") + (r.approx ? " approx" : ""));
+        row.appendChild(el("span", "ab-l", r.label));
+        row.appendChild(el("span", "ab-a mono", r.a));
+        var bcell = el("span", "ab-b mono");
+        if (r.differ) bcell.appendChild(el("span", "ab-arrow", "→ "));
+        bcell.appendChild(document.createTextNode(r.b));
+        row.appendChild(bcell);
+        table.appendChild(row);
+      });
+    }
+
+    return {
+      key: "abtech", title: "A/B Technical Diff", def: false, el: p,
+      update: function (d) {
+        lastData = d;
+        if (onlyCb.checked !== !!state.settings.abtechDiffOnly) onlyCb.checked = !!state.settings.abtechDiffOnly;
+        render();
+      },
+    };
+  })();
+
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "compare", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -886,7 +973,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels" },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1219,6 +1306,7 @@
       if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
       if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
       if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
+      if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;

@@ -6,6 +6,34 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## A/B Technical Diff (v0.4.0)
+
+### Tech metadata rides `iinfo/hello`, not the beats
+
+Codec / resolution / pixfmt / colour / audio params are stable per file, so
+`main.js` `gMeta().tech` is sent on `iinfo/hello` (on load, and again on
+`mpv.video-params` / `audio-params` change — those often aren't ready at
+`iina.file-loaded`). `global.js` already merges arbitrary hello fields into the
+registry; its per-player compare summary gained one line (`tech`). The diff
+itself is **pure web-view logic** — `ui/abtech.js` picks A's and B's `tech` out
+of `state.compare.players` by id. No new message, no `global.js` maths.
+
+### `ui/abtech.js` owns all formatting + tolerances
+
+`rows(a,b)` returns the labelled, formatted, `differ`-flagged table (or `null`
+when either side has no metadata yet). fps compared within 0.01; **bitrate rows**
+are `approx` and only flag a difference beyond 10 % (mpv's `video-bitrate` /
+`audio-bitrate` are rolling estimates). Bit depth is derived — video from the
+pixel-format suffix (`…p10le` → 10-bit), audio from the PCM codec name
+(`pcm_s24le` → 24-bit; `audio-params/format` can't tell 24 from 32).
+
+### Future: differences → QC events
+
+Not built. The panel could offer "Mark all differences" → one
+`QCE.create({ source:"compare", type:"technical-difference",
+meta:{ field, a, b } })` per flagged row. `ui/events.js` already accepts that
+shape; `type` and `meta` are free-form.
+
 ## QC Markers (v0.3.0)
 
 ### Generic QC event model, not a marker-specific store

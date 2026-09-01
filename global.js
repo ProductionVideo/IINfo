@@ -28,7 +28,7 @@
 const { console } = iina;
 const G = iina.global;
 
-console.log("IINfo: global entry loading (v0.3.0)");
+console.log("IINfo: global entry loading (v0.4.0)");
 
 /* ------------------------------------------------------------ sync maths
  * Inlined from lib/sync.js (IINA's require() won't return module.exports).
@@ -128,6 +128,7 @@ var PINS = [];
         id: id, path: p.path || null, filename: p.filename || null,
         w: p.w || null, h: p.h || null, fps: p.fps || null,
         duration: p.duration || null, pos: p.pos != null ? p.pos : null, paused: !!p.paused,
+        tech: p.tech || null,
       };
     });
   }

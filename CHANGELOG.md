@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0
+
+**A/B Technical Diff — is B actually the same encode as A?**
+
+New **A/B Technical Diff** panel (off by default). When A and B are both
+assigned, it lays their technical metadata side by side and flags every
+difference:
+
+- Container, video codec, resolution, aspect / pixel aspect, frame rate,
+  duration, frame count, pixel format, **bit depth**, colour range / matrix /
+  primaries / transfer, video bitrate.
+- Audio codec, sample rate, channels, channel layout, **audio bit depth**,
+  audio bitrate.
+- Differing rows are highlighted with an `A → B` readout; the header shows the
+  count ("matched" / "3 differences"). **Differences only** collapses the table
+  to just the mismatches.
+- Frame rate is matched within a small tolerance; bitrate rows (mpv reports a
+  rolling estimate) only flag past ~10 %.
+
+Internals: `ui/abtech.js` + `test/abtech.test.js`. Technical metadata now rides
+the A/B `hello` message; see `DECISIONS.md`.
+
 ## 0.3.1
 
 **Toolbar tidy — one "Tools" drawer, tabbed; panels are now reorderable.**
