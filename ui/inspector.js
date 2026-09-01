@@ -974,7 +974,7 @@
     var body = el("div", "body");
 
     function sc() {
-      if (!state.settings.scope) state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+      if (!state.settings.scope) state.settings.scope = CFG.scopeDefault();
       return state.settings.scope;
     }
     function set(patch) { state.settings.scope = Object.assign({}, sc(), patch); pushConfig(); render(); }
@@ -1077,9 +1077,8 @@
     p.appendChild(h);
     var body = el("div", "body");
 
-    var DQ_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 };
     function dq() {
-      if (!state.settings.deepqc) state.settings.deepqc = Object.assign({}, DQ_DEFAULT);
+      if (!state.settings.deepqc) state.settings.deepqc = CFG.deepqcDefault();
       return state.settings.deepqc;
     }
     function set(patch) { state.settings.deepqc = Object.assign({}, dq(), patch); pushConfig(); render(); }
@@ -1224,13 +1223,15 @@
   ];
   var SIZES = [["1", "Small"], ["1.15", "Normal"], ["1.3", "Large"], ["1.5", "XL"], ["1.75", "XXL"], ["2.1", "Huge"]];
 
+  // every persisted default comes from ui/config.js — the ONE source of truth
+  var CFG = IINfoConfig;
+  var _cfg0 = CFG.defaults();
   var state = {
-    panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
+    panels: _cfg0.panels, panelOrder: _cfg0.panelOrder, data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, deepqc: { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 } },
+    settings: _cfg0.settings,
   };
-  ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
   // effective panel order: the user's saved order (valid keys only), then any
   // panels they've never seen (new features) in their default position
@@ -1571,35 +1572,14 @@
     });
   }
   function applyConfig(cfg) {
-    if (cfg && cfg.panels) ORDER.forEach(function (kk) { if (kk in cfg.panels) state.panels[kk] = !!cfg.panels[kk]; });
-    if (cfg && Array.isArray(cfg.panelOrder)) state.panelOrder = cfg.panelOrder.slice();
-    if (cfg && cfg.wave && typeof cfg.wave.mono === "boolean") wave.mono = cfg.wave.mono;
-    if (cfg && cfg.settings) {
-      if (cfg.settings.theme) state.settings.theme = cfg.settings.theme;
-      if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
-      if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
-      if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
-      if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
-      if (typeof cfg.settings.experimental === "boolean") state.settings.experimental = cfg.settings.experimental;
-      if (cfg.settings.scope && typeof cfg.settings.scope === "object") {
-        state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
-        ["type", "layout", "size", "corner", "bright", "opacity"].forEach(function (k) {
-          if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
-        });
-      }
-      if (cfg.settings.deepqc && typeof cfg.settings.deepqc === "object") {
-        var dqs = cfg.settings.deepqc, dqt = state.settings.deepqc;
-        ["freeze", "black", "outliers"].forEach(function (k) { if (typeof dqs[k] === "boolean") dqt[k] = dqs[k]; });
-        if (dqs.range === "limited" || dqs.range === "full" || dqs.range === "off") dqt.range = dqs.range;
-        if (typeof dqs.freezeDur === "number") dqt.freezeDur = dqs.freezeDur;
-        if (typeof dqs.blackDur === "number") dqt.blackDur = dqs.blackDur;
-      }
-      if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
-    }
-    if (cfg && cfg.win) state.win = cfg.win;
-    // Deep QC is experimental for now — never show it (or let the plugin arm it)
-    // unless Experimental features is on
-    if (!state.settings.experimental) state.panels.deepqc = false;
+    // ONE validator — ui/config.js. It accepts any prior stored shape (or null),
+    // clamps every field and forces panels.deepqc off unless experimental is on.
+    var norm = CFG.normalize(cfg);
+    ORDER.forEach(function (kk) { state.panels[kk] = norm.panels[kk]; });
+    state.panelOrder = norm.panelOrder;
+    wave.mono = norm.wave.mono;
+    state.settings = norm.settings;
+    if (cfg && cfg.win) state.win = cfg.win;   // legacy geometry (own key now — see main.js)
     applySettings();
     remountPanels(); buildDrawer(); applyVisibility();
     if (state.data) applyData();
@@ -1734,7 +1714,7 @@
   // the plugin's ⌥⇧W menu cycled the scope — sync the panel + persist
   iina.onMessage("iinfo-scope-set", function (msg) {
     if (!msg || !msg.scope) return;
-    state.settings.scope = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, msg.scope);
+    state.settings.scope = CFG.normalizeScope(msg.scope);
     if (state.data) applyData();
     pushConfig();
   });
