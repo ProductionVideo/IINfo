@@ -3,12 +3,16 @@
 A real-time video-QC toolkit that lives inside [IINA](https://iina.io). A
 floating, theme-able inspector window reports exactly what the player is decoding
 and rendering *right now*, frame by frame — plus A/B version comparison, manual
-and automated QC issue marking, and live signal scopes.
+and automated QC issue marking, live video scopes, and audio metering.
 
 <p align="center">
-  <img src="docs/hero.png" alt="IINfo inspector window" width="440"><br>
-  <img src="docs/waveform.png" alt="Audio waveform and level meters" width="300">
-  <img src="docs/settings.png" alt="Panel and display settings" width="300">
+  <img src="docs/hero.png" alt="IINfo inspector — timecode, frame metadata, video signal and A/V sync" width="460">
+</p>
+<p align="center">
+  <img src="docs/markers.png" alt="QC markers, Deep QC and video scopes" width="214">
+  <img src="docs/compare.png" alt="A/B compare and A/B technical diff" width="214">
+  <img src="docs/audio.png" alt="Audio waveform, level meters and EBU R128 loudness" width="214">
+  <img src="docs/tools.png" alt="Tools drawer — panel toggles and layout order" width="214">
 </p>
 
 ## Inspector panels
@@ -142,7 +146,7 @@ Then open a video ▸ **Plugin** menu ▸ **Toggle IINfo Inspector** (`⌥⇧I`)
 
 ## How it works
 
-`main.js` runs per player window; a ~30 Hz poll from the web view pulls one JSON
+`main.js` runs per player window; a ~25 Hz poll from the web view pulls one JSON
 payload of mpv properties. `ui/inspector.{html,css,js}` is a self-contained web
 view (no build step) — panels are built once and updated in place,
 `requestAnimationFrame` drives the meters and canvases.
