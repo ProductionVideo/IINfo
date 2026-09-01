@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0
+
+**Video Scopes — a live waveform / parade / vectorscope / histogram on the picture.**
+
+New **Video Scopes** panel. mpv renders the selected scope onto the video in the
+player window (the first video filter IINfo has used):
+
+- **Waveform** (luma), **RGB Parade**, **Vectorscope**, **Histogram**.
+- **Layout** — *Overlay* in a picture corner, or docked as a *Bottom* / *Side*
+  bar (the picture makes room, the scope gets full width/height).
+- **Size** S–XXL, **Brightness** (trace intensity), **Corner**, **Opacity**.
+- `⌥⇧W` cycles the scope — works with the inspector closed / fullscreen.
+- Runs live during playback. It's a CPU filter, so it can cost some
+  hardware-decode performance; set it to Off when you're done. No new permission.
+
+Internals: a labelled `@iinfoscope` vf filter with the same poll-driven,
+self-healing lifecycle as the audio filter; `test/scopes.test.js`. This is also
+the groundwork for a future *live* A/B visual compare.
+
 ## 0.5.0
 
 **A/V compare stability fix + experimental A/B Visual Compare.**

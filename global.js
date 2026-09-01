@@ -28,7 +28,7 @@
 const { console } = iina;
 const G = iina.global;
 
-console.log("IINfo: global entry loading (v0.5.0)");
+console.log("IINfo: global entry loading (v0.6.0)");
 
 /* ------------------------------------------------------------ sync maths
  * Inlined from lib/sync.js (IINA's require() won't return module.exports).

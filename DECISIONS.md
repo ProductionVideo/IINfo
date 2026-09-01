@@ -6,6 +6,33 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Video Scopes (v0.6.0)
+
+### mpv renders the scope, on the video — same lifecycle as the audio filter
+
+A labelled `@iinfoscope` `vf` filter (`split` → scope → `overlay` / `pad` +
+`scale2ref`). `tickScope()` mirrors `tickFilter()` exactly — reconciles the
+running graph string against `scopeCfg` + `fileGen` from `collect()` **and** the
+1 Hz watchdog, remove-now/add-next-tick on any change. Not gated on the inspector
+window (the video is the consumer), so `⌥⇧W` works fullscreen. `vf add`/`remove`
+via `mpv.command`, labelled — the user's own `vf` chain is untouched. No new
+permission. This is the reusable video-lavfi pattern; a future live A/B compare
+(`blend=difference` with an `--external-file`) is the same shape.
+
+### Docked layouts pad + scale2ref, never hstack/vstack
+
+`vstack`/`hstack` require identical pixel formats, which would force the picture
+through a lossy `format=yuv420p`. Instead: `pad` the picture (keeping its native
+format / bit depth), `scale2ref` the scope into the strip `pad` added, `overlay`
+it there. Even strip height via `ceil(ih*(1+frac)/2)*2`.
+
+### Readability > minimalism
+
+mpv's `waveform` defaults (`intensity=0.04`, `bgopacity=0.3`) are invisible over
+dark footage. IINfo forces `bgopacity=1`, exposes `intensity` as a Brightness
+slider (default 0.18), frames the overlay box, and offers sizes to XXL. The
+scope is a QC instrument — it needs to read at a glance, not blend in.
+
 ## A/B Visual Compare (v0.5.0)
 
 ### Paused frame-grab + canvas, not live video compositing
