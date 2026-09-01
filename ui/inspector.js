@@ -1,6 +1,7 @@
 (function () {
   "use strict";
   var iina = window.iina;
+  var QCE = window.QCEvents;   // pure QC event model (ui/events.js)
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
   function cssVar(name, fallback) {
@@ -721,7 +722,141 @@
     };
   })();
 
-  var ORDER = ["compare", "timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
+  // -- QC Markers ------------------------------------------------------
+  P.markers = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "QC Markers"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    var bar = el("div", "qc-bar");
+    var bMark = el("button", "btn xs", "＋ Mark");
+    bMark.title = "Mark the current frame  ( ⇧M )";
+    bMark.addEventListener("click", function () { addMarker(); });
+    var bPrev = el("button", "btn xs", "◀ Prev");
+    bPrev.addEventListener("click", function () { navMarker(-1); });
+    var bNext = el("button", "btn xs", "Next ▶");
+    bNext.addEventListener("click", function () { navMarker(1); });
+    var filterSel = el("select", "cmp-sel qc-filter");
+    ["All", "Unresolved", "Manual", "Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"]
+      .forEach(function (o) { var op = el("option", null, o); op.value = o; filterSel.appendChild(op); });
+    filterSel.addEventListener("change", function () {
+      state.markerFilter = filterSel.value;
+      render(); if (typeof renderMarks === "function") renderMarks();
+    });
+    var exportWrap = el("span", "qc-export");
+    var bExport = el("button", "btn xs", "Export ▾");
+    var exportMenu = el("div", "qc-export-menu");
+    exportMenu.hidden = true;
+    [["Copy report", "report"], ["Copy CSV", "csv"], ["Copy JSON", "json"],
+     ["Save JSON…", "save-json"], ["Save sidecar (.iinfo.json)", "save-sidecar"]].forEach(function (o) {
+      var mi = el("button", "qc-export-item", o[0]);
+      mi.addEventListener("click", function () { exportMenu.hidden = true; doExport(o[1]); });
+      exportMenu.appendChild(mi);
+    });
+    bExport.addEventListener("click", function (e) { e.stopPropagation(); exportMenu.hidden = !exportMenu.hidden; });
+    document.addEventListener("click", function () { exportMenu.hidden = true; });
+    exportWrap.appendChild(bExport); exportWrap.appendChild(exportMenu);
+
+    bar.appendChild(bMark); bar.appendChild(bPrev); bar.appendChild(bNext);
+    bar.appendChild(filterSel); bar.appendChild(exportWrap);
+    body.appendChild(bar);
+
+    var listEl = el("div", "qc-list");
+    body.appendChild(listEl);
+    var empty = el("div", "hint", "No markers yet. Press ⇧M here — or ⌥⇧M anywhere in IINA — to mark the current frame.");
+    body.appendChild(empty);
+
+    p.appendChild(body);
+
+    var idSig = "", contentSig = "";
+
+    function visible() {
+      return QCE.sort(QCE.filter(state.markers.list, markerFilterQuery()));
+    }
+    function mkSelect(opts, cur, onChange) {
+      var s = el("select", "cmp-sel");
+      opts.forEach(function (o) {
+        var op = el("option", null, o); op.value = o;
+        if (o === cur) op.selected = true;
+        s.appendChild(op);
+      });
+      s.addEventListener("change", function () { onChange(s.value); });
+      s.addEventListener("keydown", function (e) { e.stopPropagation(); });
+      return s;
+    }
+    function editor(ev) {
+      var box = el("div", "qc-edit");
+      var note = el("input", "qc-note-in");
+      note.type = "text"; note.value = ev.note; note.placeholder = "note";
+      function commit() { if (note.value !== ev.note) mutateMarker(ev.id, function (x) { return QCE.update(x, { note: note.value }); }); }
+      note.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Enter") { commit(); editingId = null; idSig = ""; render(); } });
+      note.addEventListener("blur", commit);
+      box.appendChild(note);
+      var row2 = el("div", "qc-edit-row");
+      row2.appendChild(mkSelect(QCE.CATEGORIES, ev.category, function (v) { mutateMarker(ev.id, function (x) { return QCE.update(x, { category: v }); }); }));
+      row2.appendChild(mkSelect(QCE.SEVERITIES, ev.severity, function (v) { mutateMarker(ev.id, function (x) { return QCE.update(x, { severity: v }); }); }));
+      var done = el("button", "btn xs", "done");
+      done.addEventListener("click", function () { commit(); editingId = null; idSig = ""; render(); });
+      row2.appendChild(done);
+      box.appendChild(row2);
+      return box;
+    }
+    function rowFor(ev) {
+      var r = el("div", "qc-row" + (state.markerSel === ev.id ? " sel" : "") + (ev.resolved ? " done" : ""));
+      r.appendChild(el("span", "qc-dot " + ev.severity));
+      var mainSpan = el("span", "qc-main");
+      mainSpan.appendChild(el("span", "qc-tc mono", ev.tc || clock(ev.tMs / 1000)));
+      mainSpan.appendChild(el("span", "qc-sub",
+        (ev.frame != null ? "#" + ev.frame + " · " : "") + ev.category +
+        (ev.source !== "manual" ? " · " + ev.source : "")));
+      if (ev.note) mainSpan.appendChild(el("span", "qc-note", ev.note));
+      mainSpan.addEventListener("click", function () { selectMarker(ev.id); act("seek-abs", ev.tMs / 1000); });
+      r.appendChild(mainSpan);
+      var tools = el("span", "qc-tools");
+      var bE = el("button", "mini", "edit");
+      bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
+      var bR = el("button", "mini", ev.resolved ? "reopen" : "resolve");
+      bR.addEventListener("click", function (e) { e.stopPropagation(); mutateMarker(ev.id, function (x) { return QCE.withResolved(x, !x.resolved); }); });
+      var bX = el("button", "mini", "✕");
+      bX.addEventListener("click", function (e) { e.stopPropagation(); removeMarker(ev.id); });
+      tools.appendChild(bE); tools.appendChild(bR); tools.appendChild(bX);
+      r.appendChild(tools);
+      if (editingId === ev.id) r.appendChild(editor(ev));
+      return r;
+    }
+    function render() {
+      var items = visible();
+      var ids = items.map(function (e) { return e.id; }).join(",") + "|" + state.markerFilter + "|" + state.markerSel + "|" + editingId;
+      if (editingId && ids === idSig) return;   // keep a live editor from being yanked
+      var content = ids + "||" + items.map(function (e) {
+        return e.tMs + e.severity + e.category + (e.resolved ? 1 : 0) + e.note;
+      }).join(",");
+      if (content === contentSig) return;
+      idSig = ids; contentSig = content;
+
+      listEl.textContent = "";
+      empty.hidden = state.markers.list.length > 0;
+      if (state.markers.list.length && !items.length) listEl.appendChild(el("div", "hint", "Nothing matches this filter."));
+      items.forEach(function (ev) { listEl.appendChild(rowFor(ev)); });
+    }
+
+    return {
+      key: "markers", title: "QC Markers", def: false, el: p, _render: render,
+      update: function (d) {
+        var n = state.markers.list.length;
+        var open = 0;
+        for (var i = 0; i < n; i++) if (!state.markers.list[i].resolved) open++;
+        badge.textContent = n ? (n + (open ? " · " + open + " open" : "")) : "";
+        render();
+      },
+    };
+  })();
+
+  var ORDER = ["compare", "markers", "timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -751,9 +886,106 @@
 
   var state = {
     panels: {}, data: null, gen: null, win: null, compare: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15" },
+    markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
+    markerFilter: "All", markerSel: null,
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
+
+  /* ---- QC markers (the web view is canonical while open) ---- */
+  var editingId = null;      // marker id whose inline editor is open
+  var mkPushTimer = null;
+
+  function markerFilterQuery() {
+    var f = state.markerFilter;
+    if (!f || f === "All") return null;
+    if (f === "Unresolved") return { resolved: false };
+    if (f === "Manual") return { source: "manual" };
+    return { category: f };
+  }
+  function pushMarkers(now) {
+    if (!awake && !now) return;
+    clearTimeout(mkPushTimer);
+    var send = function () {
+      try { iina.postMessage("iinfo-markers", { json: QCE.serialize(state.markers.list, state.markers.media) }); } catch (e) {}
+    };
+    if (now) { send(); return; }
+    mkPushTimer = setTimeout(send, 400);
+  }
+  function markerAt(id) {
+    for (var i = 0; i < state.markers.list.length; i++) if (state.markers.list[i].id === id) return i;
+    return -1;
+  }
+  function mkRefresh() {
+    if (P.markers && P.markers._render) P.markers._render();
+    if (typeof renderMarks === "function") renderMarks();
+  }
+  function mutateMarker(id, fn) {
+    var i = markerAt(id); if (i < 0) return;
+    var next = fn(state.markers.list[i]); if (!next) return;
+    state.markers.list = state.markers.list.slice();
+    state.markers.list[i] = next;
+    pushMarkers(); mkRefresh();
+  }
+  function removeMarker(id) {
+    state.markers.list = state.markers.list.filter(function (e) { return e.id !== id; });
+    if (editingId === id) editingId = null;
+    if (state.markerSel === id) state.markerSel = null;
+    pushMarkers(); mkRefresh();
+  }
+  function selectMarker(id) { state.markerSel = id; mkRefresh(); }
+  function addMarker() {
+    var d = state.data, t = d && d.time; if (!t) return;
+    var cmp = state.compare && state.compare.state;
+    var paired = !!(cmp && cmp.aId && cmp.bId);
+    var ev = QCE.create({
+      source: "manual", type: "marker",
+      tMs: Math.round((t.pos != null ? t.pos : 0) * 1000),
+      frame: t.frame != null ? Math.round(t.frame) : null,
+      fps: t.fps || null,
+      tc: (t.dropFrame ? t.timecode : t.timecodeNDF) || null,
+      abActive: paired && !!cmp.linked,
+      aId: paired ? cmp.aId : null, bId: paired ? cmp.bId : null,
+    });
+    if (!ev) return;
+    state.markers.list = state.markers.list.concat([ev]);
+    state.markerSel = ev.id;
+    editingId = ev.id;
+    if (!state.panels.markers) {
+      state.panels.markers = true;
+      applyVisibility(); buildDrawer(); pushConfig();
+    }
+    pushMarkers(); mkRefresh();
+  }
+  function navMarker(dir) {
+    var t = state.data && state.data.time;
+    var cur = t && t.pos != null ? Math.round(t.pos * 1000) : 0;
+    var q = markerFilterQuery();
+    var ev = dir < 0 ? QCE.prev(state.markers.list, cur, q) : QCE.next(state.markers.list, cur, q);
+    if (!ev) return;
+    selectMarker(ev.id);
+    act("seek-abs", ev.tMs / 1000);
+  }
+  function doExport(kind) {
+    var list = state.markers.list, media = state.markers.media;
+    if (kind === "report") { showReport(QCE.toReport(list, media)); return; }
+    if (kind === "csv") { showReport(QCE.toCSV(list)); return; }
+    if (kind === "json") { showReport(QCE.serialize(list, media)); return; }
+    if (kind === "save-json") {
+      var name = ((media && media.filename) || "iinfo") + ".iinfo.json";
+      try { iina.postMessage("iinfo-export", { fmt: "data", name: name, content: QCE.serialize(list, media) }); } catch (e) {}
+      return;
+    }
+    if (kind === "save-sidecar") {
+      try { iina.postMessage("iinfo-export", { fmt: "sidecar", content: QCE.serialize(list, media) }); } catch (e) {}
+      return;
+    }
+  }
+  function showReport(text) {
+    $("report-text").value = text;
+    $("report").showModal();
+    $("report-text").select();
+  }
 
   var mqLight = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
 
@@ -1006,6 +1238,18 @@
     }
     state.data = d;
     state.compare = d.compare || null;
+    if (d.markers) {
+      state.markers.media = d.markers.media || state.markers.media;
+      state.markers.sidecar = !!d.markers.sidecar;
+      state.markers.sidecarError = !!d.markers.sidecarError;
+      // adopt the plugin's list only when it (re)loaded from disk — otherwise the
+      // web view is the source of truth and pushes changes up
+      if (d.markers.gen !== state.markers.gen) {
+        state.markers.gen = d.markers.gen;
+        state.markers.list = (d.markers.list || []).slice();
+        editingId = null;
+      }
+    }
     lastBeat = now;
 
     // the plugin only marks metering `fresh` once the data provably belongs to
@@ -1038,6 +1282,7 @@
   setTimeout(pollLoop, 0);
   setInterval(function () { document.body.classList.toggle("stale", performance.now() - lastBeat > 1500); }, 400);
   window.addEventListener("pagehide", function () {
+    try { pushMarkers(true); } catch (e) {}
     try { iina.postMessage("iinfo-closing"); } catch (e) {}
   });
 
@@ -1206,6 +1451,7 @@
       if (e.key === "J" || e.key === "j") { e.preventDefault(); act("nudge", -10); return; }
       if (e.key === "L" || e.key === "l") { e.preventDefault(); act("nudge", 10); return; }
       if (e.key === "C" || e.key === "c") { e.preventDefault(); if (frameStr()) copyText(frameStr()); return; }
+      if (e.key === "M" || e.key === "m") { e.preventDefault(); addMarker(); return; }
       return;
     }
     if (e.key === "c") { e.preventDefault(); if (curTC) copyText(curTC); return; }

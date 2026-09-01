@@ -13,7 +13,8 @@
   "entry": "main.js",
   "globalEntry": "global.js",
   "permissions": [
-    "show-osd"
+    "show-osd",
+    "file-system"
   ],
   "preferenceDefaults": {
     "config": ""

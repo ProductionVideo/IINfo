@@ -10,9 +10,9 @@
  *   - persist the webview's panel/settings config via iina.preferences
  */
 
-const { console, core, event, mpv, menu, standaloneWindow, preferences } = iina;
+const { console, core, event, mpv, menu, standaloneWindow, preferences, file } = iina;
 
-console.log("IINfo: main entry loading (v0.2.0)");
+console.log("IINfo: main entry loading (v0.3.0)");
 
 // iina.global is present only when Info.json declares a "globalEntry". Every
 // A/B-compare code path below is a guarded no-op without it, so single-player
@@ -38,6 +38,19 @@ let lastBeatSent = 0;      // Date.now() of the last iinfo/beat to the global en
 let alive = true;          // false once mpv is tearing down — STOP calling into it
                            // (a timer callback hitting a freed mpv handle segfaults,
                            //  and native crashes aren't catchable by try/catch)
+
+/* QC markers — the web view owns the canonical list while the inspector is open
+ * and pushes it up serialized; here we just load it on file change, persist what
+ * the web view sends, and capture a minimal marker for the ⌥⇧M menu path. */
+let qcList = [];           // marker events for the current media
+let qcMedia = null;        // { path, filename, size, durationMs, fps } identity block
+let qcGen = 0;             // bumped whenever qcList is (re)loaded from disk
+let qcLoadedGen = -1;      // fileGen we last loaded markers for
+let qcNeedsId = false;     // loaded before path was known — retry once it lands
+let qcNeedsSize = false;   // loaded before file-size was known — re-key once it lands
+let qcSidecarError = false; // last sidecar write fell back to the data dir
+let qcSaveTimer = null;
+let qcPendingBody = null;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -213,6 +226,151 @@ function runAction(type, value) {
   } catch (e) { console.log("IINfo action error: " + e); }
 }
 
+/* -------------------------------------------------------------- QC markers */
+
+function djb2Hex(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+function localMediaPath() {
+  const p = str("path");
+  return p && p.indexOf("://") < 0 ? p : null;   // sidecars only make sense for local files
+}
+function sidecarPath() {
+  const p = localMediaPath();
+  return p ? p + ".iinfo.json" : null;
+}
+function wantSidecar() {
+  return !!(lastConfig && lastConfig.settings && lastConfig.settings.markerSidecar);
+}
+function safeExists(p) { try { return !!p && file.exists(p); } catch (e) { return false; } }
+
+function qcIdentity() {
+  const path = str("path");
+  const filename = str("filename") || (path ? path.split("/").pop() : null);
+  if (!path && !filename) return null;
+  const dur = num("duration");
+  const size = num("file-size");
+  const fps = num("container-fps") || num("estimated-vf-fps");
+  return {
+    path: path || null,
+    filename: filename || null,
+    size: size != null ? Math.round(size) : null,
+    durationMs: dur != null ? Math.round(dur * 1000) : null,
+    fps: fps || null,
+  };
+}
+function qcFingerprint(id) {
+  return djb2Hex((id.filename || "?") + "|" + (id.size != null ? id.size : "?"));
+}
+function dataMarkerFile(id) { return "@data/qc-" + qcFingerprint(id) + ".json"; }
+function markerFile(id) {
+  const side = sidecarPath();
+  if (side && (wantSidecar() || safeExists(side))) return side;
+  return dataMarkerFile(id);
+}
+
+function serializeMarkers() {
+  const events = qcList.slice().sort((a, b) => (a.tMs - b.tMs) || ((a.ts || 0) - (b.ts || 0)));
+  return JSON.stringify({
+    iinfo: "qc-markers", version: 1,
+    media: qcMedia || null,
+    saved: new Date().toISOString(),
+    events: events,
+  }, null, 2);
+}
+
+function loadMarkers() {
+  if (!alive) return;
+  const id = qcIdentity();
+  qcMedia = id;
+  qcSidecarError = false;
+  qcNeedsSize = !!(id && id.size == null);
+  let list = [];
+  if (id) {
+    const f = markerFile(id);
+    try {
+      if (file.exists(f)) {
+        const parsed = JSON.parse(file.read(f) || "null");
+        const evs = parsed && Array.isArray(parsed.events) ? parsed.events
+          : (Array.isArray(parsed) ? parsed : []);
+        list = evs.filter((e) => e && typeof e === "object" && typeof e.tMs === "number");
+      }
+    } catch (e) { console.log("IINfo: marker load — " + e); }
+  }
+  qcList = list;
+  qcGen++;
+  qcLoadedGen = fileGen;
+  qcNeedsId = !id;                 // path wasn't ready — retry when it appears
+  if (wantWindow) { try { standaloneWindow.postMessage("iinfo-data", collect()); } catch (e) {} }
+}
+function maybeLoadMarkers() {
+  if (!alive) return;
+  if (qcLoadedGen !== fileGen) loadMarkers();
+  else if (qcNeedsId && str("path") != null) loadMarkers();
+  else if (qcNeedsSize && num("file-size") != null) loadMarkers();
+}
+
+function persistMarkers(body) {
+  qcPendingBody = body != null ? body : serializeMarkers();
+  if (qcSaveTimer) return;
+  qcSaveTimer = setTimeout(flushMarkers, 800);
+}
+function flushMarkersNow() {
+  if (qcSaveTimer) { clearTimeout(qcSaveTimer); qcSaveTimer = null; }
+  if (qcPendingBody != null) flushMarkers();
+}
+function flushMarkers() {
+  qcSaveTimer = null;
+  const body = qcPendingBody; qcPendingBody = null;
+  if (body == null) return;
+  const id = qcMedia || qcIdentity();
+  if (!id) return;
+  const target = markerFile(id);
+  try {
+    file.write(target, body);
+    qcSidecarError = false;
+  } catch (e) {
+    console.log("IINfo: marker save (" + target + ") — " + e);
+    if (target.indexOf("@data") !== 0) {
+      try { file.write(dataMarkerFile(id), body); qcSidecarError = true; }
+      catch (e2) { console.log("IINfo: marker save fallback — " + e2); }
+    }
+  }
+}
+
+// ⌥⇧M — capture a marker at the current frame even with the inspector closed.
+// Emits the same shape ui/events.js create() does; the web view does the rest.
+function markHere() {
+  if (!alive) return;
+  const t = num("time-pos");
+  if (t == null) { core.osd("IINfo: no media to mark"); return; }
+  const fps = num("container-fps") || num("estimated-vf-fps");
+  let frame = num("estimated-frame-number");
+  if (frame == null && fps) frame = Math.round(t * fps);
+  const tc = framesToTimecode(frame, fps);
+  const cmp = lastCompare && lastCompare.state;
+  const paired = !!(cmp && cmp.aId && cmp.bId);
+  const ev = {
+    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+    source: "manual", type: "marker",
+    tMs: Math.max(0, Math.round(t * 1000)),
+    frame: frame != null ? Math.round(frame) : null,
+    fps: fps || null,
+    tc: tc && tc.indexOf("-") < 0 ? tc : null,
+    durMs: null, category: "Other", severity: "warning", note: "",
+    resolved: false, ts: Date.now(), ref: null,
+    meta: paired ? { abActive: !!cmp.linked, aId: String(cmp.aId), bId: String(cmp.bId) } : {},
+  };
+  if (!qcMedia) qcMedia = qcIdentity();
+  qcList = qcList.concat([ev]);
+  qcGen++;
+  persistMarkers(serializeMarkers());
+  core.osd("IINfo: QC marker " + (ev.tc || (ev.tMs / 1000).toFixed(2) + "s"));
+  if (wantWindow) { try { standaloneWindow.postMessage("iinfo-data", collect()); } catch (e) {} }
+}
+
 /* --------------------------------------------------------- data collection */
 
 function collect() {
@@ -360,6 +518,15 @@ function collect() {
     compare: lastCompare
       ? { state: lastCompare.state, players: lastCompare.players, myId: myId }
       : null,
+
+    /* QC markers for the current media */
+    markers: {
+      list: qcList,
+      media: qcMedia,
+      gen: qcGen,
+      sidecar: wantSidecar(),
+      sidecarError: qcSidecarError,
+    },
   };
 }
 
@@ -397,11 +564,13 @@ function wireMessages() {
     // while an inspector is open, beat a few times a second so the global
     // registry (and the other window's compare readout) stays responsive
     if (G && Date.now() - lastBeatSent > 250) { lastBeatSent = Date.now(); gBeat(); }
+    maybeLoadMarkers();
     standaloneWindow.postMessage("iinfo-data", collect());
   });
 
   // sent from pagehide — the user closed the window with the red title-bar button
   onWin("iinfo-closing", () => {
+    flushMarkersNow();
     if (!wantWindow) return;
     wantWindow = false;
     teardownFilter();
@@ -436,6 +605,39 @@ function wireMessages() {
   onWin("iinfo-compare-cmd", (cmd) => {
     lastContact = Date.now();
     if (G && cmd && cmd.op) { try { G.postMessage("iinfo/compare-cmd", cmd); } catch (e) {} }
+  });
+
+  // QC markers: the web view is canonical while it's open — it hands us the whole
+  // serialized list on every change and we write it straight to disk.
+  onWin("iinfo-markers", (m) => {
+    lastContact = Date.now();
+    if (!m || typeof m.json !== "string") return;
+    try {
+      const p = JSON.parse(m.json);
+      if (p && Array.isArray(p.events)) { qcList = p.events; if (p.media) qcMedia = p.media; }
+    } catch (e) { /* still persist the raw body */ }
+    persistMarkers(m.json);
+  });
+
+  // Export: write a report / CSV / JSON to the data dir (or a sidecar) and reveal it.
+  onWin("iinfo-export", (m) => {
+    lastContact = Date.now();
+    if (!m || typeof m.content !== "string") return;
+    try {
+      let target;
+      if (m.fmt === "sidecar") {
+        target = sidecarPath();
+        if (!target) { core.osd("IINfo: this media has no local file for a sidecar"); return; }
+      } else {
+        target = "@data/" + String(m.name || "iinfo-markers.json").replace(/[^\w.\-]+/g, "_");
+      }
+      file.write(target, m.content);
+      try { file.showInFinder(target); } catch (e) {}
+      core.osd("IINfo: exported");
+    } catch (e) {
+      console.log("IINfo: export — " + e);
+      core.osd("IINfo: export failed");
+    }
   });
 }
 
@@ -525,6 +727,7 @@ try {
   menu.addItem(menu.item("IINfo: Previous Frame", pin(() => { try { mpv.command("frame-back-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+LEFT" }));
   menu.addItem(menu.item("IINfo: Next Frame", pin(() => { try { mpv.command("frame-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+RIGHT" }));
   menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
+  menu.addItem(menu.item("IINfo: Mark QC Issue", pin(markHere), { keyBinding: "Alt+Shift+m" }));
 } catch (e) { console.log("IINfo: menu setup error — " + e); }
 
 // bump the generation counter on any file / audio change. tickFilter() (run
@@ -537,6 +740,7 @@ function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log
 on("iina.file-loaded", () => {
   fileGen++;
   if (G) gHello();   // path / fps / duration may all have changed
+  maybeLoadMarkers();
   if (wantWindow) standaloneWindow.postMessage("iinfo-data", collect());
 });
 on("mpv.audio-params.changed", () => {
@@ -544,6 +748,7 @@ on("mpv.audio-params.changed", () => {
   if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
 });
 on("mpv.end-file", () => { freshGen = -1; });
+on("mpv.shutdown", () => { try { flushMarkersNow(); } catch (e) {} });
 
 /* ------------------------------------------------------- A/B compare (global)
  *
@@ -587,6 +792,7 @@ if (G) {
 
   let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
   const goodbye = () => {
+    try { flushMarkersNow(); } catch (e) {}
     alive = false;                       // stop every mpv read from here on
     try { clearInterval(beatTimer); } catch (e) {}
     gSend("iinfo/bye", {});
