@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+**Toolbar tidy — one "Tools" drawer, tabbed; panels are now reorderable.**
+
+- The **Settings** button is now **Tools**, opening a tabbed drawer:
+  **Panels · Appearance · Storage · Actions**.
+- **Panels** tab — toggle *and* reorder every panel (`↑ / ↓`, plus *Reset
+  order*). Your order persists. The default order is now a reading order (core
+  video readouts → A/B Compare + QC Markers → the audio panels) instead of
+  newest-on-top.
+- **Actions** tab — *Copy QC report*, *Export markers* (report / CSV / JSON /
+  save / sidecar), *Exact-frame screenshot*. The toolbar loses its separate
+  **Report** button and the QC panel loses its **Export ▾** menu — both live
+  here now.
+- **Storage** tab — the marker-location toggle, with a clearer explanation.
+
 ## 0.3.0
 
 **QC markers — mark a problem at the exact frame, navigate them, export the list.**

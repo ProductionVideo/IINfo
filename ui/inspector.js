@@ -747,25 +747,11 @@
       state.markerFilter = filterSel.value;
       render(); if (typeof renderMarks === "function") renderMarks();
     });
-    var bExport = el("button", "btn xs", "Export ▾");
-    bExport.style.marginLeft = "auto";
-    var exportRow = el("div", "qc-export-row");
-    exportRow.hidden = true;
-    [["Copy report", "report"], ["Copy CSV", "csv"], ["Copy JSON", "json"],
-     ["Save JSON…", "save-json"], ["Save sidecar", "save-sidecar"]].forEach(function (o) {
-      var mi = el("button", "btn xs", o[0]);
-      mi.addEventListener("click", function () { exportRow.hidden = true; bExport.textContent = "Export ▾"; doExport(o[1]); });
-      exportRow.appendChild(mi);
-    });
-    bExport.addEventListener("click", function () {
-      exportRow.hidden = !exportRow.hidden;
-      bExport.textContent = exportRow.hidden ? "Export ▾" : "Export ▴";
-    });
+    filterSel.style.marginLeft = "auto";
 
     bar.appendChild(bMark); bar.appendChild(bPrev); bar.appendChild(bNext);
-    bar.appendChild(filterSel); bar.appendChild(bExport);
+    bar.appendChild(filterSel);
     body.appendChild(bar);
-    body.appendChild(exportRow);
 
     var listEl = el("div", "qc-list");
     body.appendChild(listEl);
@@ -865,7 +851,10 @@
     };
   })();
 
-  var ORDER = ["compare", "markers", "timecode", "frame", "signal", "codec", "sync", "waveform", "levels", "loudness", "audiofmt"];
+  // canonical panel-key list AND the default order (reading order: core video
+  // readouts → the two workflow panels → the audio cluster). The user's own
+  // order lives in state.panelOrder; order-agnostic loops still iterate this.
+  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "compare", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -894,12 +883,31 @@
   var SIZES = [["1", "Small"], ["1.15", "Normal"], ["1.3", "Large"], ["1.5", "XL"], ["1.75", "XXL"], ["2.1", "Huge"]];
 
   var state = {
-    panels: {}, data: null, gen: null, win: null, compare: null,
+    panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels" },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
+
+  // effective panel order: the user's saved order (valid keys only), then any
+  // panels they've never seen (new features) in their default position
+  function panelOrder() {
+    var seen = {}, out = [];
+    (Array.isArray(state.panelOrder) ? state.panelOrder : []).forEach(function (k) {
+      if (P[k] && !seen[k]) { seen[k] = 1; out.push(k); }
+    });
+    ORDER.forEach(function (k) { if (!seen[k]) { seen[k] = 1; out.push(k); } });
+    return out;
+  }
+  function movePanel(k, dir) {
+    var ord = panelOrder(), i = ord.indexOf(k), j = i + dir;
+    if (i < 0 || j < 0 || j >= ord.length) return;
+    ord[i] = ord[j]; ord[j] = k;
+    state.panelOrder = ord;
+    remountPanels(); buildDrawer(); pushConfig();
+    if (state.data) applyData();
+  }
 
   /* ---- QC markers (the web view is canonical while open) ---- */
   var editingId = null;      // marker id whose inline editor is open
@@ -1062,7 +1070,10 @@
 
   /* ============================================================ mount */
   var mainEl = $("main");
-  ORDER.forEach(function (kk) { mainEl.appendChild(P[kk].el); });
+  function remountPanels() {
+    panelOrder().forEach(function (kk) { mainEl.appendChild(P[kk].el); });  // appendChild re-orders existing nodes
+  }
+  remountPanels();
 
   function applyVisibility() {
     ORDER.forEach(function (kk) { P[kk].el.hidden = !state.panels[kk]; });
@@ -1082,15 +1093,38 @@
     return row;
   }
 
+  var DRAWER_TABS = [["panels", "Panels"], ["appearance", "Appearance"], ["storage", "Storage"], ["actions", "Actions"]];
+  function drawerTab() {
+    var t = state.settings.drawerTab;
+    for (var i = 0; i < DRAWER_TABS.length; i++) if (DRAWER_TABS[i][0] === t) return t;
+    return "panels";
+  }
+  function showDrawerTab() {
+    var active = drawerTab(), dr = $("drawer");
+    [].forEach.call(dr.querySelectorAll(".drawer-tab"), function (b) { b.classList.toggle("on", b.dataset.tab === active); });
+    [].forEach.call(dr.querySelectorAll(".drawer-body"), function (b) { b.hidden = b.dataset.tab !== active; });
+  }
+
   function buildDrawer() {
     var dr = $("drawer");
     dr.innerHTML = "";
 
-    var pgroup = el("div", "drawer-group");
-    pgroup.appendChild(el("div", "drawer-head", "Panels"));
-    var pwrap = el("div", "drawer-panels");
-    ORDER.forEach(function (kk) {
-      var lab = el("label");
+    var tabRow = el("div", "drawer-tabs");
+    var body = {};
+    DRAWER_TABS.forEach(function (t) {
+      var tb = el("button", "drawer-tab", t[1]);
+      tb.dataset.tab = t[0];
+      tb.addEventListener("click", function () { state.settings.drawerTab = t[0]; showDrawerTab(); pushConfig(); });
+      tabRow.appendChild(tb);
+      var b = el("div", "drawer-body"); b.dataset.tab = t[0]; body[t[0]] = b;
+    });
+    dr.appendChild(tabRow);
+
+    /* Panels — visibility + order */
+    var ord = panelOrder();
+    ord.forEach(function (kk, idx) {
+      var row = el("div", "panel-order-row");
+      var lab = el("label", "por-label");
       var cb = el("input"); cb.type = "checkbox"; cb.checked = !!state.panels[kk];
       cb.addEventListener("change", function () {
         state.panels[kk] = cb.checked;
@@ -1099,20 +1133,33 @@
       });
       lab.appendChild(cb);
       lab.appendChild(document.createTextNode(P[kk].title));
-      pwrap.appendChild(lab);
+      row.appendChild(lab);
+      var move = el("span", "por-move");
+      var up = el("button", "mini", "↑"); up.disabled = idx === 0;
+      up.addEventListener("click", function () { movePanel(kk, -1); });
+      var dn = el("button", "mini", "↓"); dn.disabled = idx === ord.length - 1;
+      dn.addEventListener("click", function () { movePanel(kk, 1); });
+      move.appendChild(up); move.appendChild(dn);
+      row.appendChild(move);
+      body.panels.appendChild(row);
     });
-    pgroup.appendChild(pwrap);
-    dr.appendChild(pgroup);
+    var reset = el("button", "btn xs", "Reset order");
+    reset.addEventListener("click", function () {
+      state.panelOrder = ORDER.slice();
+      remountPanels(); buildDrawer(); pushConfig();
+      if (state.data) applyData();
+    });
+    body.panels.appendChild(reset);
 
-    var dgroup = el("div", "drawer-group");
-    dgroup.appendChild(el("div", "drawer-head", "Display"));
-    dgroup.appendChild(selectRow("Theme", THEMES, state.settings.theme, function (v) {
+    /* Appearance */
+    var ab = body.appearance;
+    ab.appendChild(selectRow("Theme", THEMES, state.settings.theme, function (v) {
       state.settings.theme = v; applySettings(); pushConfig();
     }));
-    dgroup.appendChild(selectRow("Readout font", FONTS, state.settings.monoFont, function (v) {
+    ab.appendChild(selectRow("Readout font", FONTS, state.settings.monoFont, function (v) {
       state.settings.monoFont = v; applySettings(); pushConfig();
     }));
-    dgroup.appendChild(selectRow("Text size", SIZES, state.settings.textSize, function (v) {
+    ab.appendChild(selectRow("Text size", SIZES, state.settings.textSize, function (v) {
       state.settings.textSize = v; applySettings(); pushConfig();
     }));
     var waveRow = el("label", "set-row");
@@ -1120,23 +1167,44 @@
     wcb.addEventListener("change", function () { wave.mono = wcb.checked; pushConfig(); });
     waveRow.appendChild(wcb);
     waveRow.appendChild(el("span", "set-label", "Sum waveform channels"));
-    dgroup.appendChild(waveRow);
+    ab.appendChild(waveRow);
+    ab.appendChild(el("div", "drawer-note", "† font falls back to a system monospace unless it is installed"));
 
+    /* Storage */
+    var sb = body.storage;
     var scRow = el("label", "set-row");
     var scb = el("input"); scb.type = "checkbox"; scb.checked = !!state.settings.markerSidecar;
     scb.addEventListener("change", function () { state.settings.markerSidecar = scb.checked; pushConfig(); });
     scRow.appendChild(scb);
     scRow.appendChild(el("span", "set-label", "Store QC markers beside media (.iinfo.json)"));
-    dgroup.appendChild(scRow);
+    sb.appendChild(scRow);
+    sb.appendChild(el("div", "drawer-note",
+      "Off: markers are kept in the plugin's data folder, keyed to the file. On: a .iinfo.json is written next to the media so the markers travel with it."));
+    if (state.markers.sidecarError)
+      sb.appendChild(el("div", "drawer-note bad", "This media's folder is read-only — markers fell back to the data folder."));
 
-    dgroup.appendChild(el("div", "drawer-note", "QC markers are otherwise kept in the plugin's data folder. † falls back to a system monospace unless the font is installed"));
-    dr.appendChild(dgroup);
+    /* Actions */
+    var acRow = el("div", "actions-row");
+    function actBtn(parent, label, fn) { var b = el("button", "btn xs", label); b.addEventListener("click", fn); parent.appendChild(b); }
+    actBtn(acRow, "Copy QC report", function () { showReport(buildReport()); });
+    actBtn(acRow, "Exact-frame screenshot", function () { act("screenshot"); });
+    body.actions.appendChild(acRow);
+    body.actions.appendChild(el("div", "drawer-head", "Export markers"));
+    var exRow = el("div", "actions-row");
+    [["Report", "report"], ["CSV", "csv"], ["JSON", "json"], ["Save JSON…", "save-json"], ["Save sidecar", "save-sidecar"]]
+      .forEach(function (o) { actBtn(exRow, o[0], function () { doExport(o[1]); }); });
+    body.actions.appendChild(exRow);
+    body.actions.appendChild(el("div", "drawer-note", "Deep-QC scan and video scopes will live here."));
+
+    DRAWER_TABS.forEach(function (t) { dr.appendChild(body[t[0]]); });
+    showDrawerTab();
   }
 
   function pushConfig() {
     if (!awake) return;   // stay silent while IINA is backgrounded
     iina.postMessage("iinfo-config", {
       panels: state.panels,
+      panelOrder: panelOrder(),
       wave: { mono: wave.mono },
       settings: state.settings,
       win: state.win,
@@ -1144,16 +1212,18 @@
   }
   function applyConfig(cfg) {
     if (cfg && cfg.panels) ORDER.forEach(function (kk) { if (kk in cfg.panels) state.panels[kk] = !!cfg.panels[kk]; });
+    if (cfg && Array.isArray(cfg.panelOrder)) state.panelOrder = cfg.panelOrder.slice();
     if (cfg && cfg.wave && typeof cfg.wave.mono === "boolean") wave.mono = cfg.wave.mono;
     if (cfg && cfg.settings) {
       if (cfg.settings.theme) state.settings.theme = cfg.settings.theme;
       if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
       if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
       if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
+      if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
     applySettings();
-    buildDrawer(); applyVisibility();
+    remountPanels(); buildDrawer(); applyVisibility();
     if (state.data) applyData();
   }
 
@@ -1403,7 +1473,7 @@
   $("b-next").addEventListener("click", function () { act("frame-next"); });
   $("b-pause").addEventListener("click", function () { act("toggle-pause"); });
   $("b-shot").addEventListener("click", function () { act("screenshot"); });
-  $("b-gear").addEventListener("click", function () { $("drawer").classList.toggle("open"); });
+  $("b-tools").addEventListener("click", function () { $("drawer").classList.toggle("open"); });
 
   $("jump-group").addEventListener("click", function (e) {
     var b = e.target.closest("[data-jump]"); if (!b) return;
@@ -1616,10 +1686,6 @@
     }
     return L.join("\n");
   }
-  $("b-copy").addEventListener("click", function () {
-    $("report-text").value = buildReport();
-    $("report").showModal(); $("report-text").select();
-  });
   $("report-close").addEventListener("click", function () { $("report").close(); });
   $("report-copy").addEventListener("click", function () {
     $("report-text").select();
