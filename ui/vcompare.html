@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IINfo Visual Compare</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
+  [hidden] { display: none !important; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body { font: 12px -apple-system, system-ui, sans-serif; color: #f2f4f8; }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  #handle {
+    position: absolute; top: 0; bottom: 46px; width: 14px; margin-left: -7px;
+    cursor: ew-resize; z-index: 3;
+  }
+  #handle::before {
+    content: ""; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px;
+    background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6);
+  }
+  #handle::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    margin: -11px 0 0 -11px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6);
+  }
+
+  .bar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 46px; z-index: 4;
+    display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    background: rgba(12,13,16,.86); border-top: 1px solid rgba(255,255,255,.12);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .modes { display: flex; gap: 3px; }
+  .bar button {
+    background: rgba(255,255,255,.08); color: #f2f4f8; border: 1px solid rgba(255,255,255,.14);
+    border-radius: 6px; padding: 5px 9px; font: inherit; cursor: pointer;
+  }
+  .bar button:hover { border-color: #56a8ff; }
+  .bar button.on { background: #56a8ff; border-color: #56a8ff; color: #04101f; }
+  .bar button:disabled { opacity: .35; cursor: default; }
+  .sl { display: flex; align-items: center; gap: 7px; color: #c7ccd6; }
+  .sl input { width: 130px; accent-color: #56a8ff; }
+  .sl[hidden] { display: none !important; }
+  .note { color: #ffc94d; margin-left: auto; }
+  #exit { margin-left: 6px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="handle" data-clickable hidden></div>
+
+<div class="bar">
+  <div class="modes" id="modes">
+    <button data-clickable data-mode="diff">Difference</button>
+    <button data-clickable data-mode="flicker">Flicker</button>
+    <button data-clickable data-mode="wipe">Wipe</button>
+    <button data-clickable data-mode="onion">Onion</button>
+    <button data-clickable data-mode="a">A</button>
+    <button data-clickable data-mode="b">B</button>
+  </div>
+  <label class="sl" id="sl" hidden><span id="sl-label">Rate</span>
+    <input id="slider" type="range" data-clickable min="1" max="12" step="1" value="6" />
+    <span id="sl-val"></span>
+  </label>
+  <span class="note" id="note"></span>
+  <button id="refresh" data-clickable title="Re-grab both frames  (r)">⟳</button>
+  <button id="exit" data-clickable>✕ Exit</button>
+</div>
+
+<script src="vcfit.js"></script>
+<script src="vcompare.js"></script>
+</body>
+</html>

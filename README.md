@@ -20,7 +20,7 @@ persist:
 
 | Panel | Contents |
 |---|---|
-| **A/B Compare** | Assign any two open windows as A / B, offset B from A by whole frames, link transport so play / scrub / frame-step drive both — frame-accurate when stopped |
+| **A/B Compare** | Assign any two open windows as A / B, offset B from A by whole frames, link transport so play / scrub / frame-step drive both — frame-accurate when stopped. **Visual compare** overlays the two frames on window A: difference · flicker · wipe · onion |
 | **A/B Technical Diff** | Codec / resolution / fps / pixel format / bit depth / colour range·matrix·primaries·transfer / audio rate·channels·depth·bitrate for A and B side by side, every difference flagged; "differences only" view |
 | **QC Markers** | Mark the current frame (`⇧M`), tag it (category / severity / note), navigate Prev / Next, see markers on the scrub bar, export report / CSV / JSON |
 | **Timecode & Frames** | SMPTE timecode (NDF + drop-frame), current / total frame, container fps + source, position / duration / remaining, progress |

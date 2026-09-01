@@ -6,6 +6,50 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## A/B Visual Compare (v0.5.0)
+
+### Paused frame-grab + canvas, not live video compositing
+
+IINA plugins can't composite video. Two viable routes: (a) `screenshot` A and B
+and composite the stills, or (b) load B as an `--external-file` into one window
+and blend live with mpv `lavfi-complex`. Chose **(a)**: it's frame-exact,
+fully controllable, carries no risk to mpv's playback, keeps the two-window A/B
+model, and matches IINfo's contract that "frame accuracy lives in the stopped
+state". Live blending stays a possible later "advanced" mode.
+
+### Rendered as an overlay on window A
+
+IINA's `overlay` is an HTML web view *on top of a player window* — so the
+composite shows full-size where your eyes already are. Only **A's** `main.js`
+touches `overlay`; `global.js` designates A and orchestrates. `overlay.loadFile`
+clears listeners exactly like `standaloneWindow`, so `wireOverlay()` +
+`OV_PINS[]` re-registers after every load (same GC-pin discipline).
+
+### Frames move through the shared `@tmp` dir, not messages
+
+A and B's `main.js` are the same plugin → same `@tmp/`. Each grabber writes
+`@tmp/iinfo-vc-{A,B}.png`; A reads **both** directly (no image bytes shuttled
+between windows). A then base64s them (JavaScriptCore has no `btoa` → inline
+encoder) into data URIs for `overlay.postMessage`. `screenshot-to-file` returns
+before the file is flushed, hence a 180 ms grabber delay + A-side read retry.
+
+Grabs are debounced (~320 ms) and fire on `vcompare` toggle, every ganged
+step/seek/pause, and a manual refresh. Enabling Visual Compare force-links
+transport. A dropped/collapsed pair, a swap, or a file change tears it down.
+
+### Difference needs matching raster size
+
+`ui/vcfit.js` `diffAllowed()` — a per-pixel diff of two differently-sized
+frames is a diff of a resample, so Difference is disabled (with a notice) when
+A and B natural sizes differ; flicker/wipe/onion scale B into A's box.
+
+### Message size
+
+A 4K PNG frame base64 ≈ 4–11 MB per `overlay.postMessage`. Acceptable for a
+deliberate paused op; if it's slow live, fall back to `screenshot-format`
+webp/jpg q≈95 (flicker/wipe/onion unaffected; add a small threshold to the
+difference view to hide codec noise).
+
 ## A/B Technical Diff (v0.4.0)
 
 ### Tech metadata rides `iinfo/hello`, not the beats
@@ -145,6 +189,15 @@ state and the global entry relays that same verb to both — they always converg
 ### IINA global-entry IPC — the constraints we hit
 
 Discovered by testing in live IINA 1.4.4 (all undocumented):
+
+0. **(v0.5.0)** The callback scope flakiness (#4 below) is worse than "custom
+   top-level bindings" — under load it drops **JS built-ins**. Seen live:
+   `onBeat` throwing `ReferenceError: Can't find variable: String` ~8×/s, which
+   aborted every beat, stalled the registry, and got players swept. Fix: alias
+   the built-ins the handlers touch (`String`, `Object`, `Date`) into
+   **module-level** `var`s (which survive reliably, as `sync` does) and use those
+   — `_String(x)`, `_Object.assign`, `_Date.now()`.
+
 
 1. **`require()` doesn't return `module.exports`.** It loads the file and hands
    back `undefined`. `lib/sync.js` is therefore *inlined* verbatim into

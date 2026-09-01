@@ -650,6 +650,20 @@
     linkRow.appendChild(deltaVal);
     wrap.appendChild(linkRow);
 
+    var vcRow = el("div", "cmp-row");
+    var vcLab = el("label", "cmp-link");
+    var vcCb = el("input"); vcCb.type = "checkbox";
+    vcCb.addEventListener("change", function () { cmd({ op: "vcompare", on: vcCb.checked }); });
+    vcLab.appendChild(vcCb);
+    vcLab.appendChild(el("span", null, "Visual compare"));
+    vcLab.appendChild(el("span", "chip warn", "experimental"));
+    vcRow.appendChild(vcLab);
+    wrap.appendChild(vcRow);
+    var vcHint = el("div", "hint", "Flicker / wipe / difference overlay on window A — paused comparison, pause to update.");
+    vcHint.style.textAlign = "left";
+    vcHint.style.padding = "2px 0 0";
+    wrap.appendChild(vcHint);
+
     body.appendChild(wrap);
     p.appendChild(body);
 
@@ -692,6 +706,13 @@
         if (linkCb.checked !== !!s.linked) linkCb.checked = !!s.linked;
 
         var paired = !!(s.aId && s.bId);
+        var distinct = paired && String(s.aId) !== String(s.bId);
+        var showVc = !!state.settings.experimental;
+        vcRow.hidden = !showVc;
+        vcHint.hidden = !showVc;
+        if (vcCb.checked !== !!s.vcompare) vcCb.checked = !!s.vcompare;
+        vcCb.disabled = !distinct;
+        vcRow.style.opacity = distinct ? "" : ".5";
 
         // B's live distance from the sync point (A + offset)
         var fpsB = null;
@@ -973,7 +994,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1255,7 +1276,19 @@
     waveRow.appendChild(wcb);
     waveRow.appendChild(el("span", "set-label", "Sum waveform channels"));
     ab.appendChild(waveRow);
-    ab.appendChild(el("div", "drawer-note", "† font falls back to a system monospace unless it is installed"));
+
+    var xpRow = el("label", "set-row");
+    var xpcb = el("input"); xpcb.type = "checkbox"; xpcb.checked = !!state.settings.experimental;
+    xpcb.addEventListener("change", function () {
+      state.settings.experimental = xpcb.checked;
+      pushConfig();
+      if (state.data) applyData();   // reveal / hide experimental controls
+    });
+    xpRow.appendChild(xpcb);
+    xpRow.appendChild(el("span", "set-label", "Experimental features"));
+    ab.appendChild(xpRow);
+
+    ab.appendChild(el("div", "drawer-note", "Experimental: A/B Visual Compare (flicker / wipe / difference overlay) — usable but rough on performance. † font falls back to a system monospace unless installed."));
 
     /* Storage */
     var sb = body.storage;
@@ -1307,6 +1340,7 @@
       if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
       if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
       if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
+      if (typeof cfg.settings.experimental === "boolean") state.settings.experimental = cfg.settings.experimental;
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
