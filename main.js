@@ -191,6 +191,98 @@ function teardownFilter() {
   armedGen = -1;
 }
 
+/* ------------------------------------------------------------ video scopes
+ *
+ * A labelled @iinfoscope video filter, composited into a corner of the picture
+ * (split + <scope> + overlay). Lifecycle is poll-driven exactly like the audio
+ * filter: tickScope() (in collect() and the 1 Hz watchdog) reconciles the
+ * running instance against scopeCfg + fileGen, so a config change, a clip
+ * change, or mpv dropping the filter all self-heal. Its consumer is the video
+ * itself, so — unlike the audio filter — it is NOT gated on the inspector window.
+ */
+
+const SCOPE_LABEL = "iinfoscope";
+const SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
+let scopeCfg = { type: "off", size: "m", corner: "tr", opacity: 1 };
+let scopeArmedSig = null;   // the graph string the running instance was built for
+let scopeArmedGen = -1;
+let scopeError = "";
+
+// pure: build the mpv `vf add` argument for a scope config, or null for "off"
+function scopeGraph(cfg) {
+  if (!cfg || !cfg.type || cfg.type === "off") return null;
+  const boxW = { s: 320, m: 480, l: 680 }[cfg.size] || 480;
+  let pre, inner, boxH;
+  switch (cfg.type) {
+    case "waveform":    pre = "format=yuv444p"; inner = "waveform=mode=column:components=1:filter=lowpass:graticule=green:flags=numbers"; boxH = Math.round(boxW * 0.62); break;
+    case "parade":      pre = "format=gbrp";    inner = "waveform=mode=column:components=7:filter=lowpass:display=parade:graticule=green"; boxH = Math.round(boxW * 0.62); break;
+    case "vectorscope": pre = "format=yuv444p"; inner = "vectorscope=mode=color3:graticule=green:flags=name"; boxH = boxW; break;
+    case "histogram":   pre = "format=gbrp";    inner = "histogram"; boxH = Math.round(boxW * 0.62); break;
+    default: return null;
+  }
+  let chain = "[s]scale=640:-2," + pre + "," + inner + ",scale=" + boxW + ":" + boxH + ",setsar=1";
+  const opa = (typeof cfg.opacity === "number" && cfg.opacity < 1) ? Math.max(0, Math.min(1, cfg.opacity)) : null;
+  if (opa != null) chain += ",format=rgba,colorchannelmixer=aa=" + opa.toFixed(2);
+  chain += "[sc]";
+  const n = 16;
+  const pos = {
+    tl: "x=" + n + ":y=" + n,
+    tr: "x=W-w-" + n + ":y=" + n,
+    bl: "x=" + n + ":y=H-h-" + n,
+    br: "x=W-w-" + n + ":y=H-h-" + n,
+  }[cfg.corner] || ("x=W-w-" + n + ":y=" + n);
+  return "@" + SCOPE_LABEL + ":lavfi=[split=2[m][s];" + chain + ";[m][sc]overlay=" + pos + "]";
+}
+
+function scopePresent() {
+  const list = native("vf");
+  if (!Array.isArray(list)) return false;
+  return list.some((f) => f && (f.label === SCOPE_LABEL || f.label === "@" + SCOPE_LABEL));
+}
+function scopeRemove() {
+  if (!alive) return;
+  try { mpv.command("vf", ["remove", "@" + SCOPE_LABEL]); } catch (e) {}
+  scopeArmedSig = null; scopeArmedGen = -1;
+}
+function tickScope() {
+  if (!alive) return;
+  const sig = scopeGraph(scopeCfg);
+  if (!sig) { if (scopePresent()) scopeRemove(); return; }
+  const present = scopePresent();
+  if (present && scopeArmedSig === sig && scopeArmedGen === fileGen) return;
+  if (present) {                       // config / clip changed — drop now, re-add next tick
+    scopeRemove();
+    return;
+  }
+  try {
+    mpv.command("vf", ["add", sig]);
+    scopeArmedSig = sig; scopeArmedGen = fileGen; scopeError = "";
+  } catch (e) {
+    scopeError = String(e); scopeArmedSig = null;
+    console.log("IINfo: scope `vf add` — " + e);
+  }
+}
+function persistScopeCfg() {
+  try {
+    lastConfig = lastConfig || {};
+    lastConfig.settings = lastConfig.settings || {};
+    lastConfig.settings.scope = scopeCfg;
+    preferences.set("config", JSON.stringify(lastConfig));
+    preferences.sync();
+  } catch (e) {}
+}
+function setScope(patch) {
+  scopeCfg = Object.assign({}, scopeCfg, patch || {});
+  tickScope();
+  if (wantWindow) { try { standaloneWindow.postMessage("iinfo-scope-set", { scope: scopeCfg }); } catch (e) {} }
+  else persistScopeCfg();
+}
+function cycleScope() {
+  const i = SCOPE_TYPES.indexOf(scopeCfg.type);
+  setScope({ type: SCOPE_TYPES[(i + 1) % SCOPE_TYPES.length] });
+  core.osd("IINfo scope: " + scopeCfg.type);
+}
+
 /* ---------------------------------------------------------------- transport
  *
  * One place that turns a transport verb into an mpv/core call. Used by the
@@ -384,6 +476,7 @@ function collect() {
   if (frameCount == null && dur != null && fps) frameCount = Math.round(dur * fps);
 
   tickFilter();
+  tickScope();
 
   const vp = native("video-params") || {};
   const ap = native("audio-params") || {};
@@ -527,6 +620,9 @@ function collect() {
       sidecar: wantSidecar(),
       sidecarError: qcSidecarError,
     },
+
+    /* video scope filter */
+    scope: { cfg: scopeCfg, active: scopePresent(), error: scopeError },
   };
 }
 
@@ -590,6 +686,9 @@ function wireMessages() {
     afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
     // marker storage location toggled -> write the current list to the new place
     if (wantSidecar() !== wasSidecar && qcList.length) persistMarkers(serializeMarkers());
+    // the webview owns the scope config while it's open
+    const sc = cfg && cfg.settings && cfg.settings.scope;
+    if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, sc); tickScope(); }
   });
 
   onWin("iinfo-action", (a) => {
@@ -717,6 +816,9 @@ try {
   const saved = preferences.get("config");
   if (saved) lastConfig = JSON.parse(saved);
 } catch (e) { lastConfig = null; }
+if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
+  scopeCfg = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, lastConfig.settings.scope);
+}
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
 // in PINS so JavaScriptCore's GC can't collect it — see the note above onMsg()
@@ -732,6 +834,7 @@ try {
   menu.addItem(menu.item("IINfo: Next Frame", pin(() => { try { mpv.command("frame-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+RIGHT" }));
   menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
   menu.addItem(menu.item("IINfo: Mark QC Issue", pin(markHere), { keyBinding: "Alt+Shift+m" }));
+  menu.addItem(menu.item("IINfo: Cycle Video Scope", pin(cycleScope), { keyBinding: "Alt+Shift+w" }));
 } catch (e) { console.log("IINfo: menu setup error — " + e); }
 
 // bump the generation counter on any file / audio change. tickFilter() (run
@@ -911,6 +1014,7 @@ if (G) {
   const goodbye = () => {
     try { flushMarkersNow(); } catch (e) {}
     vcHideOverlay();
+    try { scopeRemove(); } catch (e) {}
     alive = false;                       // stop every mpv read from here on
     try { clearInterval(beatTimer); } catch (e) {}
     gSend("iinfo/bye", {});
@@ -938,6 +1042,9 @@ setInterval(() => {
       teardownFilter();
       console.log("IINfo: webview quiet — filter parked");
     }
+    // the scope's consumer is the video, not the webview — keep it reconciled
+    // even when the inspector is closed (so ⌥⇧W works fullscreen)
+    if (alive && !wantWindow) tickScope();
   } catch (e) {}
 }, 1000);
 

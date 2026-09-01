@@ -959,10 +959,98 @@
     };
   })();
 
+  // -- Video Scopes ---------------------------------------------------------
+  P.scope = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "Video Scopes"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    function sc() {
+      if (!state.settings.scope) state.settings.scope = { type: "off", size: "m", corner: "tr", opacity: 1 };
+      return state.settings.scope;
+    }
+    function set(patch) { state.settings.scope = Object.assign({}, sc(), patch); pushConfig(); render(); }
+
+    var typeRow = el("div", "seg-group scope-seg");
+    var typeBtns = {};
+    [["off", "Off"], ["waveform", "Waveform"], ["parade", "RGB Parade"], ["vectorscope", "Vectorscope"], ["histogram", "Histogram"]]
+      .forEach(function (o) {
+        var b = el("button", "btn", o[1]);
+        b.addEventListener("click", function () { set({ type: o[0] }); });
+        typeBtns[o[0]] = b; typeRow.appendChild(b);
+      });
+    body.appendChild(typeRow);
+
+    var opts = el("div", "scope-opts");
+    function pickRow(label, pairs, key, mono) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var btns = {};
+      pairs.forEach(function (o) {
+        var b = el("button", "btn xs" + (mono ? " mono" : ""), o[1]);
+        if (o[2]) b.title = o[2];
+        b.addEventListener("click", function () { var q = {}; q[key] = o[0]; set(q); });
+        btns[o[0]] = b; row.appendChild(b);
+      });
+      opts.appendChild(row);
+      return btns;
+    }
+    var sizeBtns = pickRow("Size", [["s", "S"], ["m", "M"], ["l", "L"]], "size");
+    var cornBtns = pickRow("Corner", [["tl", "◰", "top-left"], ["tr", "◳", "top-right"], ["bl", "◱", "bottom-left"], ["br", "◲", "bottom-right"]], "corner", true);
+
+    var opaRow = el("div", "scope-row");
+    opaRow.appendChild(el("span", "scope-lbl", "Opacity"));
+    var opa = el("input"); opa.type = "range"; opa.min = "0.4"; opa.max = "1"; opa.step = "0.05";
+    opa.addEventListener("input", function () { set({ opacity: parseFloat(opa.value) }); });
+    opaRow.appendChild(opa);
+    var opaVal = el("span", "scope-lbl mono", "");
+    opaRow.appendChild(opaVal);
+    opts.appendChild(opaRow);
+    body.appendChild(opts);
+
+    var NOTE = "Renders on the video in this window. CPU filter — it can reduce hardware-decode performance; set to Off when you're done.";
+    var note = el("div", "hint", NOTE);
+    note.style.textAlign = "left";
+    body.appendChild(note);
+    p.appendChild(body);
+
+    function render() {
+      var c = sc();
+      Object.keys(typeBtns).forEach(function (k) { typeBtns[k].classList.toggle("on", k === c.type); });
+      Object.keys(sizeBtns).forEach(function (k) { sizeBtns[k].classList.toggle("on", k === c.size); });
+      Object.keys(cornBtns).forEach(function (k) { cornBtns[k].classList.toggle("on", k === c.corner); });
+      var o = typeof c.opacity === "number" ? c.opacity : 1;
+      if (parseFloat(opa.value) !== o) opa.value = String(o);
+      opaVal.textContent = Math.round(o * 100) + "%";
+      opts.hidden = c.type === "off";
+    }
+
+    return {
+      key: "scope", title: "Video Scopes", def: false, el: p,
+      update: function (d) {
+        render();
+        var s = d.scope || {};
+        if (s.error) {
+          badge.textContent = "filter error"; badge.className = "tag diff";
+          note.textContent = "Scope filter failed: " + s.error; note.className = "hint bad";
+          return;
+        }
+        note.textContent = NOTE; note.className = "hint";
+        var t = (s.cfg && s.cfg.type) || "off";
+        badge.textContent = t === "off" ? "off" : (s.active ? t : t + " (starting…)");
+        badge.className = "tag" + (t !== "off" && s.active ? " ok" : "");
+      },
+    };
+  })();
+
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -994,7 +1082,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", size: "m", corner: "tr", opacity: 1 } },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1341,6 +1429,12 @@
       if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
       if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
       if (typeof cfg.settings.experimental === "boolean") state.settings.experimental = cfg.settings.experimental;
+      if (cfg.settings.scope && typeof cfg.settings.scope === "object") {
+        state.settings.scope = { type: "off", size: "m", corner: "tr", opacity: 1 };
+        ["type", "size", "corner", "opacity"].forEach(function (k) {
+          if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
+        });
+      }
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
@@ -1473,6 +1567,13 @@
   iina.onMessage("iinfo-config", function (msg) {
     if (msg && msg.config) applyConfig(msg.config);
     else { applySettings(); }
+    pushConfig();
+  });
+  // the plugin's ⌥⇧W menu cycled the scope — sync the panel + persist
+  iina.onMessage("iinfo-scope-set", function (msg) {
+    if (!msg || !msg.scope) return;
+    state.settings.scope = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, msg.scope);
+    if (state.data) applyData();
     pushConfig();
   });
   function resetForNewFile() {
