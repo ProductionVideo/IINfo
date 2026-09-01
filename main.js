@@ -8,6 +8,19 @@
  *   - manage a labelled lavfi audio filter (@iinfo) for level + loudness metering,
  *     added only while an audio panel is enabled
  *   - persist the webview's panel/settings config via iina.preferences
+ *
+ * This file cannot be split (IINA's require() won't return module.exports), so
+ * pure logic lives in ui/*.js and is inlined below with drift-guard tests:
+ *   ui/config.js  -> var iinfocfg   (config defaults / normalisation)
+ *   ui/events.js  -> var qcevents   (the single QC event writer / serialiser)
+ *   lib/deepqc.js -> var deepqc     (the Deep-QC metadata -> event bridge)
+ *
+ * Section map (grep the banners):
+ *   helpers · audio filter · video scopes · deep QC · transport · QC markers
+ *   · data collection · window setup · wiring · A/B compare (global)
+ *
+ * RULE: every mpv read goes through num/str/flag/native (all `alive`-gated).
+ * No mpv access outside those four, and none at all on a teardown path.
  */
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
