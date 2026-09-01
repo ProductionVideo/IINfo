@@ -7,7 +7,8 @@
     "link": "iina-plugin link .",
     "unlink": "iina-plugin unlink .",
     "pack": "iina-plugin pack .",
-    "test": "node --test 'test/**/*.test.js'"
+    "test": "node --test 'test/**/*.test.js'",
+    "check:ui": "node test/ui/run.js"
   },
   "devDependencies": {
     "iina-plugin-definition": "^0.99.4"

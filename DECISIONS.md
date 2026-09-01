@@ -6,6 +6,70 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Configuration & event-schema consolidation (Milestone 1)
+
+### One config module — `ui/config.js` — inlined into main.js like the others
+
+The scope and Deep-QC defaults had been literal-copied into ~7 places and
+validated by two code paths (`main.js normalizeDeep` and the web view's
+`applyConfig`) that had already drifted — `normalizeDeep` carried the
+`brng/tout/vrep` thresholds, `applyConfig` silently dropped them, so a tuned
+threshold was lost on the next config push. `ui/config.js` is now the ONE
+source of truth: `defaults()`, `normalize(raw)` (accepts any prior stored shape
+or `null`, clamps every field), and the sub-normalisers. The web view loads it
+as a `<script>`; main.js inlines the IIFE verbatim as `var iinfocfg`
+(`test/config-inline.test.js` drift-guards it — the third such copy, after
+`lib/sync.js`→global.js and `lib/deepqc.js`→main.js). Adding a setting is now a
+one-file edit. `test/config-schema.test.js` also diffs the canonical panel
+default-visibility map against each `P.<key>.def` in `inspector.js`.
+
+### One QC event writer — `ui/events.js` inlined as `var qcevents`
+
+`markHere` and `finalizeQC` used to hand-assemble the event shape, and
+`serializeMarkers` re-implemented the `{iinfo:"qc-markers",version:1,…}`
+envelope. Both now route through `qcevents.create()` / `qcevents.serialize()` —
+the same code the web view runs. The mpv reads (fps / frame / tc) stay in
+main.js; only the shape + normalisation is shared. `test/events-inline.test.js`
+guards the copy. The generic event model itself is unchanged — open `source`,
+extensible `meta` — it was the right design; it just had three writers.
+
+### Configuration ownership across windows — shared settings vs per-window state
+
+The plugin preference blob is process-global: every player window's `main.js`
+holds its own `lastConfig` and overwrites `preferences["config"]` on every push
+from its own web view. That is fine for genuine *settings* (theme, panels,
+scope, Deep-QC thresholds) — last writer wins, and that is what the user wants:
+a preference set in one window should apply everywhere.
+
+It is **not** fine for **window geometry**. With two inspectors open (the A/B
+use case) the last one to move or resize dictated *both* windows' next frame,
+and geometry bounced between A and B across launches. Geometry is now
+**per-window state** under its own key, `preferences["geom"]` — a map keyed by
+this player's id (`global` gives each `main.js` an id via the hello/you-are
+handshake), falling back to a single shared `"default"` slot when there is no
+global entry (exactly the single-window case where sharing is harmless).
+Geometry that older builds stored inside the config blob is migrated into the
+new key on first load. No player-identity infrastructure beyond the id that
+already exists for A/B.
+
+**Scope config stays a shared setting** (deliberate). It is a real preference,
+last-writer-wins is acceptable, and a scope enabled in one window re-appearing
+in another is a visible, user-controlled, bounded surprise ("why is it slow"),
+not wrong QC data. Resetting scope to Off on relaunch is a separate question for
+the scopes-tightening work, not this milestone.
+
+### UI harnesses in the repo — `npm run check:ui`
+
+The five headless-Chrome harnesses that load the real web view with a stubbed
+`window.iina` and drive the DOM now live in `test/ui/` behind `npm run
+check:ui`. They protect web-view wiring (panel toggles, config push, marker
+edits, scope controls, the compare overlay) — the regression class the pure
+unit tests can't see. Chrome stays a **soft** dependency: `run.js` skips
+cleanly (exit 0) when no Chrome/Chromium is found, and `npm test` does not
+invoke them.
+
+---
+
 ## Deep QC (v0.7.0)
 
 ### Analysis-only lavfi filter, armed only by an explicit start — never by config

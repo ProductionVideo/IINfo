@@ -8,6 +8,19 @@
  *   - manage a labelled lavfi audio filter (@iinfo) for level + loudness metering,
  *     added only while an audio panel is enabled
  *   - persist the webview's panel/settings config via iina.preferences
+ *
+ * This file cannot be split (IINA's require() won't return module.exports), so
+ * pure logic lives in ui/*.js and is inlined below with drift-guard tests:
+ *   ui/config.js  -> var iinfocfg   (config defaults / normalisation)
+ *   ui/events.js  -> var qcevents   (the single QC event writer / serialiser)
+ *   lib/deepqc.js -> var deepqc     (the Deep-QC metadata -> event bridge)
+ *
+ * Section map (grep the banners):
+ *   helpers · audio filter · video scopes · deep QC · transport · QC markers
+ *   · data collection · window setup · wiring · A/B compare (global)
+ *
+ * RULE: every mpv read goes through num/str/flag/native (all `alive`-gated).
+ * No mpv access outside those four, and none at all on a teardown path.
  */
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
@@ -27,6 +40,390 @@ const AF_LABEL = "iinfo";
 const AF_GRAPH =
   "@" + AF_LABEL +
   ":lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]";
+
+/* ---- inlined ui/config.js — canonical plugin configuration ----
+ * IINA's require() can't be trusted to return module.exports, so the ONE
+ * source of truth for every persisted setting is copied in verbatim.
+ * test/config-inline.test.js drift-guards this against ui/config.js. */
+var iinfocfg = (function () {
+  "use strict";
+
+  // canonical panel keys + default visibility. MUST stay in step with
+  // ui/inspector.js `P.<key>.def` — test/config-schema.test.js diffs the two.
+  var PANEL_KEYS = ["timecode", "frame", "signal", "scope", "codec", "sync",
+                    "deepqc", "compare", "abtech", "markers", "waveform",
+                    "levels", "loudness", "audiofmt"];
+  var PANEL_DEF = {
+    timecode: true, frame: false, signal: true, scope: false, codec: false,
+    sync: false, deepqc: false, compare: false, abtech: false, markers: false,
+    waveform: true, levels: true, loudness: false, audiofmt: false,
+  };
+
+  var DEFAULT_MONO = '"Courier New", Courier, ui-monospace, monospace';
+  var THEMES = ["black", "dark", "graphite", "midnight", "phosphor", "amber",
+                "highcontrast", "light", "auto"];
+  var TEXT_SIZES = ["1", "1.15", "1.3", "1.5", "1.75", "2.1"];
+  var DRAWER_TABS = ["panels", "appearance", "storage", "actions"];
+
+  var SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
+  var SCOPE_LAYOUTS = ["overlay", "bottom", "right"];
+  var SCOPE_SIZES = ["s", "m", "l", "xl", "xxl"];
+  var SCOPE_CORNERS = ["tl", "tr", "bl", "br"];
+  var SCOPE_RANGE = ["limited", "full", "off"];
+
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function num(v, d) { return isNum(v) ? v : d; }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function bool(v, d) { return typeof v === "boolean" ? v : d; }
+  function pick(v, allowed, d) { return allowed.indexOf(v) >= 0 ? v : d; }
+
+  /* ---- sub-object defaults (functions so callers get fresh copies) ---- */
+
+  function scopeDefault() {
+    return { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+  }
+  function deepqcDefault() {
+    return { freeze: true, black: true, outliers: true, range: "limited",
+             brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
+  }
+  function settingsDefault() {
+    return {
+      theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15",
+      markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false,
+      experimental: false,
+      scope: scopeDefault(), deepqc: deepqcDefault(),
+    };
+  }
+  function defaults() {
+    var panels = {};
+    for (var i = 0; i < PANEL_KEYS.length; i++) panels[PANEL_KEYS[i]] = PANEL_DEF[PANEL_KEYS[i]];
+    return {
+      panels: panels,
+      panelOrder: PANEL_KEYS.slice(),
+      wave: { mono: false },
+      settings: settingsDefault(),
+    };
+  }
+
+  /* ---- normalisers ---- */
+
+  function normalizeScope(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      type: pick(s.type, SCOPE_TYPES, "off"),
+      layout: pick(s.layout, SCOPE_LAYOUTS, "overlay"),
+      size: pick(s.size, SCOPE_SIZES, "l"),
+      corner: pick(s.corner, SCOPE_CORNERS, "tr"),
+      bright: clamp(num(s.bright, 0.18), 0.03, 0.8),
+      opacity: clamp(num(s.opacity, 1), 0.2, 1),
+    };
+  }
+
+  function normalizeDeepqc(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      freeze: bool(s.freeze, true),
+      black: bool(s.black, true),
+      outliers: bool(s.outliers, true),
+      range: pick(s.range, SCOPE_RANGE, "limited"),
+      brng: num(s.brng, 0.05),
+      tout: num(s.tout, 0.05),
+      vrep: num(s.vrep, 0.5),
+      freezeDur: num(s.freezeDur, 2),
+      blackDur: num(s.blackDur, 0.5),
+    };
+  }
+
+  function normalizeSettings(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      theme: pick(s.theme, THEMES, "black"),
+      monoFont: typeof s.monoFont === "string" && s.monoFont ? s.monoFont : DEFAULT_MONO,
+      textSize: pick(String(s.textSize), TEXT_SIZES, "1.15"),
+      markerSidecar: bool(s.markerSidecar, false),
+      drawerTab: pick(s.drawerTab, DRAWER_TABS, "panels"),
+      abtechDiffOnly: bool(s.abtechDiffOnly, false),
+      experimental: bool(s.experimental, false),
+      scope: normalizeScope(s.scope),
+      deepqc: normalizeDeepqc(s.deepqc),
+    };
+  }
+
+  function normalizePanels(p) {
+    p = (p && typeof p === "object") ? p : {};
+    var out = {};
+    for (var i = 0; i < PANEL_KEYS.length; i++) {
+      var k = PANEL_KEYS[i];
+      out[k] = typeof p[k] === "boolean" ? p[k] : PANEL_DEF[k];
+    }
+    return out;
+  }
+
+  // effective panel order: caller's saved order (known keys, de-duped) then any
+  // canonical key it was missing, appended in canonical order.
+  function normalizeOrder(ord) {
+    var seen = {}, out = [];
+    (Array.isArray(ord) ? ord : []).forEach(function (k) {
+      if (PANEL_KEYS.indexOf(k) >= 0 && !seen[k]) { seen[k] = 1; out.push(k); }
+    });
+    for (var i = 0; i < PANEL_KEYS.length; i++) if (!seen[PANEL_KEYS[i]]) out.push(PANEL_KEYS[i]);
+    return out;
+  }
+
+  // Accept anything a prior version may have stored (or nothing) and return the
+  // full canonical shape. `raw` is the parsed preferences["config"] blob.
+  function normalize(raw) {
+    raw = (raw && typeof raw === "object") ? raw : {};
+    var cfg = {
+      panels: normalizePanels(raw.panels),
+      panelOrder: normalizeOrder(raw.panelOrder),
+      wave: { mono: bool(raw.wave && raw.wave.mono, false) },
+      settings: normalizeSettings(raw.settings),
+    };
+    // Deep QC is experimental — the panel can't be visible unless the flag is on
+    if (!cfg.settings.experimental) cfg.panels.deepqc = false;
+    return cfg;
+  }
+
+  // Migration hook for callers that need the legacy per-window geometry that
+  // used to live inside the config blob. Returns {x,y,w,h} or null; never throws.
+  function legacyWin(raw) {
+    var w = raw && raw.win;
+    if (w && isNum(w.w) && isNum(w.h) && w.w > 100 && w.h > 100) {
+      return { x: num(w.x, 0), y: num(w.y, 0), w: w.w, h: w.h };
+    }
+    return null;
+  }
+
+  var API = {
+    PANEL_KEYS: PANEL_KEYS, PANEL_DEF: PANEL_DEF,
+    THEMES: THEMES, TEXT_SIZES: TEXT_SIZES, DRAWER_TABS: DRAWER_TABS,
+    SCOPE_TYPES: SCOPE_TYPES, SCOPE_LAYOUTS: SCOPE_LAYOUTS, SCOPE_SIZES: SCOPE_SIZES,
+    SCOPE_CORNERS: SCOPE_CORNERS,
+    DEFAULT_MONO: DEFAULT_MONO,
+    defaults: defaults, scopeDefault: scopeDefault, deepqcDefault: deepqcDefault,
+    settingsDefault: settingsDefault,
+    normalize: normalize, normalizeScope: normalizeScope, normalizeDeepqc: normalizeDeepqc,
+    normalizeSettings: normalizeSettings, normalizePanels: normalizePanels,
+    normalizeOrder: normalizeOrder,
+    legacyWin: legacyWin,
+  };
+  return API;
+})();
+/* ---- end inlined ui/config.js ---- */
+
+/* ---- inlined ui/events.js — the QC event writer + serialiser ----
+ * One place builds and normalises a QC event shape; markHere and finalizeQC
+ * both go through qcevents.create(). test/events-inline.test.js guards it. */
+var qcevents = (function () {
+  "use strict";
+
+  var SOURCES = ["manual", "audio", "video", "decode", "sync", "compare", "signalstats", "freezedetect"];
+  var CATEGORIES = ["Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"];
+  var SEVERITIES = ["info", "warning", "error"];
+
+  var EDITABLE = ["note", "category", "severity", "durMs", "type"];
+
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function str(v) { return v == null ? "" : String(v); }
+
+  function idFor() {
+    return "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+  }
+
+  function pickCategory(v) {
+    return CATEGORIES.indexOf(v) >= 0 ? v : "Other";
+  }
+  function pickSeverity(v) {
+    return SEVERITIES.indexOf(v) >= 0 ? v : "warning";
+  }
+
+  // build a normalized event. `raw` may be a capture context (create) or a
+  // persisted record (deserialize) — existing id / ts / resolved are kept.
+  function norm(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    var tMs = raw.tMs;
+    if (!isNum(tMs) && isNum(raw.frame) && isNum(raw.fps) && raw.fps > 0) tMs = (raw.frame + 0.5) / raw.fps * 1000;
+    if (!isNum(tMs)) return null;
+    tMs = Math.max(0, Math.round(tMs));
+
+    var meta = (raw.meta && typeof raw.meta === "object") ? shallow(raw.meta) : {};
+    if (raw.abActive != null) meta.abActive = !!raw.abActive;
+    if (raw.aId != null) meta.aId = String(raw.aId);
+    if (raw.bId != null) meta.bId = String(raw.bId);
+
+    return {
+      id: raw.id ? String(raw.id) : idFor(),
+      source: SOURCES.indexOf(raw.source) >= 0 ? raw.source : (raw.source ? String(raw.source) : "manual"),
+      type: raw.type ? String(raw.type) : "marker",
+      tMs: tMs,
+      frame: isNum(raw.frame) ? Math.round(raw.frame) : null,
+      fps: isNum(raw.fps) && raw.fps > 0 ? raw.fps : null,
+      tc: raw.tc ? String(raw.tc) : null,
+      durMs: isNum(raw.durMs) && raw.durMs >= 0 ? Math.round(raw.durMs) : null,
+      category: pickCategory(raw.category),
+      severity: pickSeverity(raw.severity),
+      note: str(raw.note),
+      resolved: !!raw.resolved,
+      ts: isNum(raw.ts) ? raw.ts : Date.now(),
+      ref: raw.ref != null ? raw.ref : null,
+      meta: meta,
+    };
+  }
+
+  function shallow(o) {
+    var r = {};
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) r[k] = o[k];
+    return r;
+  }
+
+  function create(ctx) { return norm(ctx || {}); }
+
+  function update(ev, patch) {
+    var next = shallow(ev);
+    next.meta = shallow(ev.meta || {});
+    patch = patch || {};
+    EDITABLE.forEach(function (k) {
+      if (!(k in patch)) return;
+      if (k === "category") next.category = pickCategory(patch.category);
+      else if (k === "severity") next.severity = pickSeverity(patch.severity);
+      else if (k === "durMs") next.durMs = isNum(patch.durMs) && patch.durMs >= 0 ? Math.round(patch.durMs) : null;
+      else if (k === "type") next.type = patch.type ? String(patch.type) : "marker";
+      else if (k === "note") next.note = str(patch.note);
+    });
+    return next;
+  }
+
+  function withResolved(ev, b) {
+    var next = shallow(ev);
+    next.meta = shallow(ev.meta || {});
+    next.resolved = !!b;
+    return next;
+  }
+
+  function sort(list) {
+    return (list || []).slice().sort(function (a, b) {
+      return (a.tMs - b.tMs) || ((a.ts || 0) - (b.ts || 0));
+    });
+  }
+
+  function matches(ev, q) {
+    if (!q) return true;
+    if (q.source != null && ev.source !== q.source) return false;
+    if (q.auto != null && (ev.source !== "manual") !== !!q.auto) return false;
+    if (q.category != null && ev.category !== q.category) return false;
+    if (q.severity != null && ev.severity !== q.severity) return false;
+    if (q.resolved != null && !!ev.resolved !== !!q.resolved) return false;
+    if (q.text) {
+      var hay = (ev.note + " " + ev.category + " " + (ev.tc || "")).toLowerCase();
+      if (hay.indexOf(String(q.text).toLowerCase()) < 0) return false;
+    }
+    return true;
+  }
+
+  function filter(list, q) {
+    return (list || []).filter(function (ev) { return matches(ev, q); });
+  }
+
+  function prev(list, tMs, q) {
+    var best = null;
+    (list || []).forEach(function (ev) {
+      if (ev.tMs >= tMs || !matches(ev, q)) return;
+      if (!best || ev.tMs > best.tMs || (ev.tMs === best.tMs && (ev.ts || 0) > (best.ts || 0))) best = ev;
+    });
+    return best;
+  }
+
+  function next(list, tMs, q) {
+    var best = null;
+    (list || []).forEach(function (ev) {
+      if (ev.tMs <= tMs || !matches(ev, q)) return;
+      if (!best || ev.tMs < best.tMs || (ev.tMs === best.tMs && (ev.ts || 0) < (best.ts || 0))) best = ev;
+    });
+    return best;
+  }
+
+  function serialize(list, media) {
+    return JSON.stringify({
+      iinfo: "qc-markers",
+      version: 1,
+      media: media || null,
+      saved: new Date().toISOString(),
+      events: sort(list).map(norm).filter(Boolean),
+    }, null, 2);
+  }
+
+  function deserialize(strIn) {
+    var o;
+    try { o = JSON.parse(strIn); } catch (e) { return null; }
+    if (Array.isArray(o)) return { media: null, events: o.map(norm).filter(Boolean) };
+    if (!o || typeof o !== "object" || !Array.isArray(o.events)) return null;
+    return { media: o.media || null, events: o.events.map(norm).filter(Boolean) };
+  }
+
+  var CSV_COLS = ["id", "source", "type", "tc", "frame", "tMs", "durMs", "category", "severity", "resolved", "note"];
+  function csvCell(v) {
+    var s = v == null ? "" : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function toCSV(list) {
+    var rows = [CSV_COLS.join(",")];
+    sort(list).forEach(function (ev) {
+      rows.push(CSV_COLS.map(function (c) { return csvCell(ev[c]); }).join(","));
+    });
+    return rows.join("\r\n");
+  }
+
+  function mdCell(v) {
+    return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  }
+  // Markdown. opts.embed -> drop the h1 + media/date preamble (for the bigger report).
+  function toReport(list, media, opts) {
+    opts = opts || {};
+    var s = sort(list);
+    var unresolved = s.filter(function (e) { return !e.resolved; }).length;
+    var L = [];
+    if (!opts.embed) {
+      L.push("# IINfo QC markers");
+      L.push("");
+      L.push("- **Media:** " + (media && (media.path || media.filename) ? "`" + (media.path || media.filename) + "`" : "—"));
+      L.push("- **Generated:** " + new Date().toISOString());
+      L.push("");
+    }
+    L.push("**" + s.length + " marker" + (s.length === 1 ? "" : "s") + " · " + unresolved + " unresolved**");
+    L.push("");
+    if (!s.length) { L.push("_No markers._"); return L.join("\n"); }
+    L.push("| # | Severity | Timecode | Frame | Category | Source | Dur | Status | Note |");
+    L.push("|--:|----------|----------|------:|----------|--------|-----|--------|------|");
+    s.forEach(function (ev, i) {
+      L.push("| " + [
+        i + 1,
+        ev.severity.toUpperCase(),
+        "`" + (ev.tc || (ev.tMs / 1000).toFixed(3) + "s") + "`",
+        ev.frame != null ? "#" + ev.frame : "—",
+        ev.category,
+        ev.source !== "manual" ? ev.source : "manual",
+        ev.durMs ? (ev.durMs / 1000).toFixed(2) + "s" : "—",
+        ev.resolved ? "✓ resolved" : "open",
+        ev.note ? mdCell(ev.note) : "—",
+      ].join(" | ") + " |");
+    });
+    return L.join("\n");
+  }
+
+  var API = {
+    SOURCES: SOURCES, CATEGORIES: CATEGORIES, SEVERITIES: SEVERITIES,
+    idFor: idFor,
+    create: create, update: update, withResolved: withResolved,
+    sort: sort, filter: filter, prev: prev, next: next,
+    serialize: serialize, deserialize: deserialize,
+    toCSV: toCSV, toReport: toReport,
+  };
+
+  return API;
+})();
+/* ---- end inlined ui/events.js ---- */
 
 let wantWindow = false;    // user intent: opened via toggle and not yet closed. NOT tied to focus.
 let afActive = false;      // is our audio filter currently in the chain?
@@ -204,7 +601,6 @@ function teardownFilter() {
 const SCOPE_LABEL = "iinfoscope";
 const SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
 const SCOPE_SIZES = { s: 380, m: 560, l: 760, xl: 1000, xxl: 1320 };
-let scopeCfg = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
 let scopeArmedSig = null;   // the graph string the running instance was built for
 let scopeArmedGen = -1;
 let scopeError = "";
@@ -273,6 +669,10 @@ function scopeGraph(cfg) {
   }[cfg.corner] || ("x=W-w-" + n + ":y=" + n);
   return "@" + SCOPE_LABEL + ":lavfi=[split=2[m][s];" + chain + ";[m][sc]overlay=" + pos + "]";
 }
+
+// live scope config (defaults from the inlined ui/config.js; the web view owns
+// it while the inspector is open, persisted in the shared "config" blob)
+let scopeCfg = iinfocfg.scopeDefault();
 
 function scopePresent() {
   const list = native("vf");
@@ -520,9 +920,7 @@ var deepqc = (function () {
 /* ---- end inlined lib/deepqc.js ---- */
 
 const QC_LABEL = "iinfoqc";
-const QC_DEEP_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited",
-                          brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
-let qcDeep = Object.assign({}, QC_DEEP_DEFAULT);   // detector settings — persisted, harmless at rest
+let qcDeep = iinfocfg.deepqcDefault();   // detector settings — persisted, harmless at rest
 let qcPanelOn = false;         // is the Deep QC panel visible in the webview right now
 // qcRunning is a deliberate, user-started analysis pass. It is NEVER derived from
 // panel visibility or restored from persisted config — opening the panel, loading
@@ -537,21 +935,8 @@ let qcAutoBuf = [];           // finalised auto events not yet merged into qcLis
 let qcFlushTimer = null;
 let qcLiveStats = null;       // last signalstats readout for the panel
 
-function normalizeDeep(s) {
-  s = s || {};
-  const num1 = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
-  return {
-    freeze: s.freeze !== false,
-    black: s.black !== false,
-    outliers: s.outliers !== false,
-    range: (s.range === "full" || s.range === "off") ? s.range : "limited",
-    brng: num1(s.brng, 0.05),
-    tout: num1(s.tout, 0.05),
-    vrep: num1(s.vrep, 0.5),
-    freezeDur: num1(s.freezeDur, 2),
-    blackDur: num1(s.blackDur, 0.5),
-  };
-}
+// thin wrapper — the detector-settings validator lives in the inlined config
+function normalizeDeep(s) { return iinfocfg.normalizeDeepqc(s); }
 
 // pure: build the `vf add` argument for the analysis filter, or null when nothing's enabled
 function qcAnalyzeGraph(cfg) {
@@ -615,24 +1000,25 @@ function stopQC() {
 
 function qcDedupKey(e) { return e.source + "|" + e.type + "|" + Math.round(e.tMs / 500); }
 
+// Turn a partial auto event from deepqc.analyze() into a full QC event. The mpv
+// reads (fps / frame / tc) happen here; the shape + normalisation is the single
+// writer, qcevents.create() — identical to the web view's QCEvents.create().
 function finalizeQC(raw) {
   const fps = num("container-fps") || num("estimated-vf-fps") || raw.fps || null;
   const frame = fps ? Math.round((raw.tMs / 1000) * fps) : null;
   const tc = frame != null && fps ? framesToTimecode(frame, fps) : null;
-  return {
-    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+  return qcevents.create({
     source: raw.source, type: raw.type,
-    tMs: Math.max(0, Math.round(raw.tMs)),
+    tMs: raw.tMs,
     frame: frame,
-    fps: fps || null,
+    fps: fps,
     tc: tc && tc.indexOf("-") < 0 ? tc : null,
-    durMs: (typeof raw.durMs === "number" && raw.durMs >= 0) ? Math.round(raw.durMs) : null,
+    durMs: raw.durMs,
     category: raw.category || "Video",
     severity: raw.severity || "warning",
     note: raw.note || "",
-    resolved: false, ts: Date.now(), ref: null,
     meta: Object.assign({ auto: true }, raw.meta || {}),
-  };
+  });
 }
 
 // buffer a partial auto event, de-duplicating against qcList and the buffer;
@@ -767,14 +1153,9 @@ function markerFile(id) {
   return dataMarkerFile(id);
 }
 
+// one serialiser — same envelope + normalisation the web view writes
 function serializeMarkers() {
-  const events = qcList.slice().sort((a, b) => (a.tMs - b.tMs) || ((a.ts || 0) - (b.ts || 0)));
-  return JSON.stringify({
-    iinfo: "qc-markers", version: 1,
-    media: qcMedia || null,
-    saved: new Date().toISOString(),
-    events: events,
-  }, null, 2);
+  return qcevents.serialize(qcList, qcMedia || null);
 }
 
 function loadMarkers() {
@@ -837,7 +1218,7 @@ function flushMarkers() {
 }
 
 // ⌥⇧M — capture a marker at the current frame even with the inspector closed.
-// Emits the same shape ui/events.js create() does; the web view does the rest.
+// Goes through the same writer (qcevents.create) as every other QC event.
 function markHere() {
   if (!alive) return;
   const t = num("time-pos");
@@ -848,17 +1229,17 @@ function markHere() {
   const tc = framesToTimecode(frame, fps);
   const cmp = lastCompare && lastCompare.state;
   const paired = !!(cmp && cmp.aId && cmp.bId);
-  const ev = {
-    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+  const ev = qcevents.create({
     source: "manual", type: "marker",
-    tMs: Math.max(0, Math.round(t * 1000)),
-    frame: frame != null ? Math.round(frame) : null,
-    fps: fps || null,
+    tMs: Math.round(t * 1000),
+    frame: frame,
+    fps: fps,
     tc: tc && tc.indexOf("-") < 0 ? tc : null,
-    durMs: null, category: "Other", severity: "warning", note: "",
-    resolved: false, ts: Date.now(), ref: null,
-    meta: paired ? { abActive: !!cmp.linked, aId: String(cmp.aId), bId: String(cmp.bId) } : {},
-  };
+    category: "Other", severity: "warning", note: "",
+    abActive: paired ? !!cmp.linked : undefined,
+    aId: paired ? cmp.aId : undefined,
+    bId: paired ? cmp.bId : undefined,
+  });
   if (!qcMedia) qcMedia = qcIdentity();
   qcList = qcList.concat([ev]);
   qcGen++;
@@ -1112,21 +1493,23 @@ function wireMessages() {
 
   onWin("iinfo-config", (cfg) => {
     const wasSidecar = wantSidecar();
-    lastConfig = cfg;
+    // geometry is per-window state — pull it out and store it under its own key,
+    // never into the shared "config" blob (see loadGeomMap / DECISIONS)
+    if (cfg && cfg.win) saveGeom(cfg.win);
+    lastConfig = iinfocfg.normalize(cfg);   // one validator, same as the web view
     // preferences.set alone only persists to disk when a prefs page closes —
     // sync() forces the flush so panel visibility + display settings survive a restart
-    try { preferences.set("config", JSON.stringify(cfg)); preferences.sync(); } catch (e) {}
+    try { preferences.set("config", JSON.stringify(lastConfig)); preferences.sync(); } catch (e) {}
     // enable metering whenever an audio panel wants it
-    const pnl = (cfg && cfg.panels) || {};
+    const pnl = lastConfig.panels;
     afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
     // marker storage location toggled -> write the current list to the new place
     if (wantSidecar() !== wasSidecar && qcList.length) persistMarkers(serializeMarkers());
     // the webview owns the scope config while it's open
-    const sc = cfg && cfg.settings && cfg.settings.scope;
-    if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, sc); tickScope(); }
+    scopeCfg = iinfocfg.normalizeScope(lastConfig.settings.scope); tickScope();
     // Deep QC detector settings persist; whether it's actually running does not —
     // hiding the panel stops an in-progress pass (nothing to see it by anyway)
-    qcDeep = normalizeDeep(cfg && cfg.settings && cfg.settings.deepqc);
+    qcDeep = normalizeDeep(lastConfig.settings.deepqc);
     qcPanelOn = !!pnl.deepqc;
     if (!qcPanelOn) stopQC(); else tickQC();
   });
@@ -1193,12 +1576,54 @@ function wireMessages() {
   });
 }
 
+/* ---- per-window geometry ------------------------------------------------
+ * Window size + position live under their OWN preferences key, keyed by this
+ * player's id — NOT in the shared "config" blob. Two inspectors open at once
+ * (the A/B use case) each persisted to the same blob, so the last one to save
+ * dictated both windows' next frame ("it moved on its own"). See DECISIONS
+ * "Configuration ownership across windows". Falls back to a single shared
+ * "default" slot when there is no global entry (so no player id) — which is
+ * exactly the single-window case where sharing is harmless. */
+let geomMap = null;
+function playerKey() { return myId != null ? "p" + myId : "default"; }
+function loadGeomMap() {
+  if (geomMap) return geomMap;
+  geomMap = {};
+  try {
+    const raw = preferences.get("geom");
+    const p = raw ? JSON.parse(raw) : null;
+    if (p && typeof p === "object") geomMap = p;
+  } catch (e) { geomMap = {}; }
+  // migrate geometry that used to live inside the shared config blob
+  if (legacyWinCfg && !Object.keys(geomMap).length) {
+    geomMap.default = legacyWinCfg;
+    saveGeomMap();
+  }
+  return geomMap;
+}
+function saveGeomMap() {
+  try { preferences.set("geom", JSON.stringify(geomMap)); preferences.sync(); } catch (e) {}
+}
+function saveGeom(g) {
+  if (!g || !(g.w > 100 && g.h > 100)) return;
+  loadGeomMap();
+  geomMap[playerKey()] = {
+    x: Math.round(g.x || 0), y: Math.round(g.y || 0),
+    w: Math.round(g.w), h: Math.round(g.h),
+  };
+  saveGeomMap();
+}
+function myGeom() {
+  const m = loadGeomMap();
+  return m[playerKey()] || m.default || null;
+}
+
 // Restore the window's last size (always) and position (only if it still lands on
 // a screen — the display setup may have changed). The webview reports geometry in
 // DOM coords (origin = top-left of the primary screen, y down); setFrame wants
 // Cocoa coords (origin = bottom-left of the primary screen, y up).
 function restoreGeom() {
-  const g = lastConfig && lastConfig.win;
+  const g = myGeom();
   if (!g || !(g.w > 200 && g.w < 6000 && g.h > 150 && g.h < 6000)) return;
 
   let screens = null;
@@ -1260,7 +1685,7 @@ function openWindow() {
     // Use the saved frame only if the user has actually shaped the window; a
     // frame still at (or near) the old hardcoded 520×880 default is treated as
     // "never customised" so the screen-relative default below takes over.
-    const g = lastConfig && lastConfig.win;
+    const g = myGeom();
     const legacyish = g && Math.abs(g.w - 520) < 40 && Math.abs(g.h - 880) < 40;
     if (g && !legacyish) restoreGeom();
     else defaultGeom();
@@ -1289,16 +1714,15 @@ function toggleWindow() {
 
 /* ------------------------------------------------------------------- wiring */
 
+let legacyWinCfg = null;   // geometry that used to live in the shared blob (migrated below)
 try {
   const saved = preferences.get("config");
-  if (saved) lastConfig = JSON.parse(saved);
-} catch (e) { lastConfig = null; }
-if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
-  scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, lastConfig.settings.scope);
-}
-if (lastConfig && lastConfig.settings) {
-  qcDeep = normalizeDeep(lastConfig.settings.deepqc);   // detector settings only — never auto-runs
-}
+  const parsed = saved ? JSON.parse(saved) : null;
+  legacyWinCfg = iinfocfg.legacyWin(parsed);
+  lastConfig = iinfocfg.normalize(parsed);   // one validator, shared with the web view
+} catch (e) { lastConfig = iinfocfg.normalize(null); }
+scopeCfg = iinfocfg.normalizeScope(lastConfig.settings.scope);
+qcDeep = normalizeDeep(lastConfig.settings.deepqc);   // detector settings only — never auto-runs
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
 // in PINS so JavaScriptCore's GC can't collect it — see the note above onMsg()
