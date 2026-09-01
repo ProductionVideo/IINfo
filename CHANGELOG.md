@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1
+
+**Fix a crash on quit; size the inspector to the display it opens on.**
+
+- **Crash fix.** v0.7.0 could segfault IINA on quit — a shutdown-time mpv event
+  (end-file / audio-params) reached the plugin after the mpv handle was freed and
+  a Deep-QC teardown path read a property off it. The plugin now stops touching
+  mpv from `iina.window-will-close` onward (the earliest teardown signal), every
+  `mpv.*` listener bails when the handle is gone, and it all self-heals if the
+  window was only transiently torn down.
+- **Default window size.** The first time you open the inspector it now opens a
+  quarter of the screen wide and half tall, on whichever display the player is
+  on — instead of a fixed 520 × 880. Resize it and that size is remembered as
+  before.
+
 ## 0.7.0
 
 **Deep QC (experimental) — automated defect detection on the timeline. QC

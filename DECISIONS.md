@@ -277,9 +277,32 @@ readout, so it was dropped.
 
 A timer callback that calls `mpv.getNumber` on a freed mpv handle segfaults, and
 a native crash is not catchable from JS. Every mpv read in `main.js` goes through
-`num`/`str`/`flag`/`native`, which now return `null` once `alive` is false;
-`alive` flips on `mpv.shutdown` / `iina.window-did-close`, which also
-`clearInterval`s the beat timer.
+`num`/`str`/`flag`/`native`, which return `null` once `alive` is false.
+
+**`alive` must flip on `iina.window-will-close`, not just `mpv.shutdown`.** v0.7.0
+shipped with `stopQC()` calling `native("vf")` (via `qcPresent()`) on the
+`mpv.end-file` / `mpv.shutdown` / teardown paths — and on every quit IINA
+delivered a `MPVController.handleEvent` (end-file, or an `audio-params.changed`
+with the params going null) to our still-registered listener *after* the mpv
+handle was gone → `mpv_get_property` SIGSEGV, four crash reports, identical
+stack. `mpv.shutdown` / `iina.window-did-close` were too late: in every observed
+session `window-will-close` fires 20 ms – 4 s before `Player has shutdown`, so
+that is where `alive` now flips (and `afActive`/`armedGen` reset). `goodbye` and
+the `mpv.shutdown` handler also set `alive = false` as their first line, before
+any read. The rules that follow from this:
+
+- No mpv-event handler (`on("mpv.*")`) may read or command mpv without an
+  `if (!alive) return` at the top — `video-params.changed` always had it;
+  `audio-params.changed` and the deep-QC `end-file` handler now do too.
+- `stopQC()` never probes mpv (`native("vf")`); it removes `@iinfoqc` only when
+  `alive && qcArmedSig` (the label we set on our own `vf add`). `mpv.end-file`
+  does no mpv work at all — just `qcRunning = false` + a pure `flushQC`.
+- `alive` is recovered on `iina.file-loaded` and `iinfo-ready` (both unambiguous
+  "player is up" signals) so a *transient* `window-will-close` — inspector still
+  open, no real shutdown — self-heals: metering/scope/QC filters reinstall on the
+  next `tickFilter`/`tickScope`/`tickQC`, and the 1 Hz watchdog also mops up any
+  `@iinfo` / `@iinfoqc` that mpv's watch-later restored while the inspector was
+  closed.
 
 ### Ganged play/pause → explicit verbs, never a toggle
 

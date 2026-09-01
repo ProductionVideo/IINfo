@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
 
-console.log("IINfo: main entry loading (v0.7.0)");
+console.log("IINfo: main entry loading (v0.7.1)");
 
 // iina.global is present only when Info.json declares a "globalEntry". Every
 // A/B-compare code path below is a guarded no-op without it, so single-player
@@ -606,10 +606,11 @@ function startQC() {
   tickQC();
 }
 function stopQC() {
-  if (!qcRunning && !qcPresent()) return;
   qcRunning = false;
-  flushQC(true);
-  if (qcPresent()) qcFilterRemove();
+  flushQC(true);   // pure + file I/O — finalizeQC()'s mpv reads are alive-gated
+  // remove the filter only if we know we added it and mpv is still usable —
+  // never probe mpv (native("vf")) here, this runs on teardown paths too
+  if (alive && qcArmedSig) qcFilterRemove();
 }
 
 function qcDedupKey(e) { return e.source + "|" + e.type + "|" + Math.round(e.tMs / 500); }
@@ -1082,6 +1083,7 @@ function wireMessages() {
   WIN_PINS.length = 0;
 
   onWin("iinfo-ready", () => {
+    alive = true;   // recover if a transient window-will-close parked us
     lastContact = Date.now();
     maybeLoadMarkers();
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
@@ -1222,6 +1224,28 @@ function restoreGeom() {
   } catch (e) {}
 }
 
+// First-ever open (no saved geometry): a quarter of the screen wide, half tall,
+// on whichever display the player window is on. IINA's screens[].frame is Cocoa
+// (bottom-left origin, y up) — the same space setFrame() takes.
+function defaultGeom() {
+  let screens = null;
+  try { screens = core.window.screens; } catch (e) {}
+  if (!Array.isArray(screens) || !screens.length) {
+    try { standaloneWindow.setFrame(520, 880); } catch (e) {}
+    return;
+  }
+  const scr = screens.find((s) => s && s.current) ||
+              screens.find((s) => s && s.main) || screens[0];
+  const f = scr.frame;
+  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
+  const w = clamp(f.width / 4, 400, f.width - 40);
+  const h = clamp(f.height / 2, 480, f.height - 80);
+  const x = Math.round(f.x + f.width - w - 24);   // tucked to the top-right of that screen
+  const y = Math.round(f.y + f.height - h - 24);
+  try { standaloneWindow.setFrame(w, h, x, y); }
+  catch (e) { try { standaloneWindow.setFrame(w, h); } catch (e2) {} }
+}
+
 function openWindow() {
   try {
     standaloneWindow.loadFile("ui/inspector.html");
@@ -1233,8 +1257,13 @@ function openWindow() {
       hideTitleBar: false,
       fullSizeContentView: false,
     });
-    if (lastConfig && lastConfig.win) restoreGeom();
-    else standaloneWindow.setFrame(520, 880);
+    // Use the saved frame only if the user has actually shaped the window; a
+    // frame still at (or near) the old hardcoded 520×880 default is treated as
+    // "never customised" so the screen-relative default below takes over.
+    const g = lastConfig && lastConfig.win;
+    const legacyish = g && Math.abs(g.w - 520) < 40 && Math.abs(g.h - 880) < 40;
+    if (g && !legacyish) restoreGeom();
+    else defaultGeom();
   } catch (e) {
     console.log("IINfo: window setup — " + e);
   }
@@ -1296,6 +1325,7 @@ let lastAudioSig = "";
 function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
 
 on("iina.file-loaded", () => {
+  alive = true;                        // mpv is provably up — recover from a parked state
   stopQC();                            // a new clip needs an explicit, deliberate restart
   qcAnalyzeState = deepqc.initState();
   qcAutoBuf = [];
@@ -1307,6 +1337,7 @@ on("iina.file-loaded", () => {
   if (wantWindow) standaloneWindow.postMessage("iinfo-data", collect());
 });
 on("mpv.audio-params.changed", () => {
+  if (!alive) return;
   const sig = JSON.stringify(native("audio-params") || {});
   if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
   if (G) gHello();   // audio format may only now be known — refresh the A/B tech snapshot
@@ -1321,12 +1352,18 @@ on("mpv.video-params.changed", () => {
   lastTechSig = sig;
   gHello();
 });
-// reaching the end of the file finishes a deep-QC pass on its own
-on("mpv.end-file", () => { freshGen = -1; try { stopQC(); } catch (e) {} });
+// reaching the end of the file finishes a deep-QC pass on its own. This can also
+// fire mid-shutdown, so touch nothing in mpv — just stop and persist.
+on("mpv.end-file", () => {
+  freshGen = -1;
+  qcRunning = false;
+  try { flushQC(true); } catch (e) {}
+});
 // pausing is a natural stop point — finalise any deep-QC span the user paused on
 // (a pass in progress keeps running; only end-of-file / explicit Stop end it)
 on("mpv.pause.changed", () => { if (alive && qcRunning && flag("pause")) { try { flushQC(true); } catch (e) {} } });
-on("mpv.shutdown", () => { try { stopQC(); } catch (e) {} try { flushMarkersNow(); } catch (e) {} });
+// mpv is going away: stop touching it FIRST, then persist (pure + file I/O only)
+on("mpv.shutdown", () => { alive = false; try { flushQC(true); } catch (e) {} try { flushMarkersNow(); } catch (e) {} });
 
 /* ------------------------------------------------------- A/B compare (global)
  *
@@ -1471,26 +1508,30 @@ if (G) {
 
   let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
   const goodbye = () => {
-    try { stopQC(); } catch (e) {}
-    try { flushMarkersNow(); } catch (e) {}
-    vcHideOverlay();
-    try { scopeRemove(); } catch (e) {}
-    alive = false;                       // stop every mpv read from here on
+    // mpv (or the whole player) is being torn down. Native crashes here aren't
+    // catchable, and IINA has been seen delivering an mpv event to a plugin
+    // listener AFTER freeing the handle — so kill every mpv path FIRST, then do
+    // only pure / file-I/O work.
+    alive = false;
     try { clearInterval(beatTimer); } catch (e) {}
+    try { flushQC(true); } catch (e) {}        // merge + persist pending auto QC events
+    try { flushMarkersNow(); } catch (e) {}
+    try { vcHideOverlay(); } catch (e) {}
     gSend("iinfo/bye", {});
   };
   on("mpv.shutdown", goodbye);
   on("iina.window-did-close", goodbye);
 }
 on("iina.window-will-close", () => {
-  // This also fires on transient player-window teardown (playback stops, some
-  // file jumps) where the inspector is still open — so do NOT clear wantWindow
-  // here or metering dies until the user re-toggles. Just release the filter;
-  // tickFilter() re-arms it on the next poll if the window is still up. The
-  // red-title-bar-button case is handled by the `iinfo-closing` message instead.
-  if (filterPresent()) tryRemove();
+  // Earliest teardown signal — every observed session has `Player has shutdown`
+  // within a few seconds. Native crashes aren't catchable and IINA can still
+  // deliver an mpv event (end-file / *-params.changed) to a plugin listener
+  // while the handle is being freed, so from here on touch NOTHING in mpv: flip
+  // `alive` first, before any read/command. `iina.file-loaded` / `iinfo-ready`
+  // flip it back if this was only a transient teardown, and tickFilter() /
+  // tickScope() then reinstate the filters. `wantWindow` is left alone.
+  alive = false;
   afActive = false; armedGen = -1;
-  if (qcPresent()) qcFilterRemove();
   console.log("IINfo: window-will-close (wantWindow left " + wantWindow + ")");
 });
 
@@ -1504,8 +1545,14 @@ setInterval(() => {
       console.log("IINfo: webview quiet — filter parked");
     }
     // the scope's consumer is the video, not the webview — keep it reconciled
-    // even when the inspector is closed (so ⌥⇧W works fullscreen)
-    if (alive && !wantWindow) tickScope();
+    // even when the inspector is closed (so ⌥⇧W works fullscreen). Also mop up a
+    // stray @iinfo / @iinfoqc that mpv's watch-later may have restored on this
+    // file (they're only wanted while the inspector polls).
+    if (alive && !wantWindow) {
+      tickScope();
+      qcRunning = false; tickQC();          // no inspector → no analysis; drops a watch-later @iinfoqc
+      if (filterPresent()) tryRemove();      // drop a watch-later @iinfo (only wanted while polling)
+    }
   } catch (e) {}
 }, 1000);
 
