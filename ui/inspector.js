@@ -959,10 +959,114 @@
     };
   })();
 
+  // -- Video Scopes ---------------------------------------------------------
+  P.scope = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "Video Scopes"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    function sc() {
+      if (!state.settings.scope) state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+      return state.settings.scope;
+    }
+    function set(patch) { state.settings.scope = Object.assign({}, sc(), patch); pushConfig(); render(); }
+
+    var typeRow = el("div", "seg-group scope-seg");
+    var typeBtns = {};
+    [["off", "Off"], ["waveform", "Waveform"], ["parade", "RGB Parade"], ["vectorscope", "Vectorscope"], ["histogram", "Histogram"]]
+      .forEach(function (o) {
+        var b = el("button", "btn", o[1]);
+        b.addEventListener("click", function () { set({ type: o[0] }); });
+        typeBtns[o[0]] = b; typeRow.appendChild(b);
+      });
+    body.appendChild(typeRow);
+
+    var opts = el("div", "scope-opts");
+    function pickRow(label, pairs, key, mono) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var btns = {};
+      pairs.forEach(function (o) {
+        var b = el("button", "btn xs" + (mono ? " mono" : ""), o[1]);
+        if (o[2]) b.title = o[2];
+        b.addEventListener("click", function () { var q = {}; q[key] = o[0]; set(q); });
+        btns[o[0]] = b; row.appendChild(b);
+      });
+      opts.appendChild(row);
+      return btns;
+    }
+    var layoutBtns = pickRow("Layout", [["overlay", "Overlay"], ["bottom", "Bottom"], ["right", "Side"]], "layout");
+    var sizeBtns = pickRow("Size", [["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"], ["xxl", "XXL"]], "size");
+    var cornRow = pickRow("Corner", [["tl", "◰", "top-left"], ["tr", "◳", "top-right"], ["bl", "◱", "bottom-left"], ["br", "◲", "bottom-right"]], "corner", true);
+    var cornBtns = cornRow;
+    var cornRowEl = opts.lastChild;
+
+    function slideRow(label, key, min, max, step, fmt) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var inp = el("input"); inp.type = "range"; inp.min = String(min); inp.max = String(max); inp.step = String(step);
+      inp.addEventListener("input", function () { var q = {}; q[key] = parseFloat(inp.value); set(q); });
+      row.appendChild(inp);
+      var val = el("span", "scope-lbl mono", "");
+      row.appendChild(val);
+      opts.appendChild(row);
+      return { row: row, inp: inp, val: val, fmt: fmt };
+    }
+    var bright = slideRow("Brightness", "bright", 0.03, 0.6, 0.01, function (v) { return Math.round(v / 0.6 * 100) + "%"; });
+    var opa = slideRow("Opacity", "opacity", 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + "%"; });
+
+    body.appendChild(opts);
+
+    var NOTE = "Renders on the video in this window. CPU filter — it can reduce hardware-decode performance; set to Off when you're done.";
+    var note = el("div", "hint", NOTE);
+    note.style.textAlign = "left";
+    body.appendChild(note);
+    p.appendChild(body);
+
+    function render() {
+      var c = sc();
+      var overlay = (c.layout || "overlay") === "overlay";
+      Object.keys(typeBtns).forEach(function (k) { typeBtns[k].classList.toggle("on", k === c.type); });
+      Object.keys(layoutBtns).forEach(function (k) { layoutBtns[k].classList.toggle("on", k === (c.layout || "overlay")); });
+      Object.keys(sizeBtns).forEach(function (k) { sizeBtns[k].classList.toggle("on", k === c.size); });
+      Object.keys(cornBtns).forEach(function (k) { cornBtns[k].classList.toggle("on", k === c.corner); });
+      var b = typeof c.bright === "number" ? c.bright : 0.18;
+      if (parseFloat(bright.inp.value) !== b) bright.inp.value = String(b);
+      bright.val.textContent = bright.fmt(b);
+      var o = typeof c.opacity === "number" ? c.opacity : 1;
+      if (parseFloat(opa.inp.value) !== o) opa.inp.value = String(o);
+      opa.val.textContent = opa.fmt(o);
+      cornRowEl.hidden = !overlay;
+      opa.row.hidden = !overlay;   // opacity is only meaningful over the picture
+      opts.hidden = c.type === "off";
+    }
+
+    return {
+      key: "scope", title: "Video Scopes", def: false, el: p,
+      update: function (d) {
+        render();
+        var s = d.scope || {};
+        if (s.error) {
+          badge.textContent = "filter error"; badge.className = "tag diff";
+          note.textContent = "Scope filter failed: " + s.error; note.className = "hint bad";
+          return;
+        }
+        note.textContent = NOTE; note.className = "hint";
+        var t = (s.cfg && s.cfg.type) || "off";
+        badge.textContent = t === "off" ? "off" : (s.active ? t : t + " (starting…)");
+        badge.className = "tag" + (t !== "off" && s.active ? " ok" : "");
+      },
+    };
+  })();
+
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -994,7 +1098,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 } },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1341,6 +1445,12 @@
       if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
       if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
       if (typeof cfg.settings.experimental === "boolean") state.settings.experimental = cfg.settings.experimental;
+      if (cfg.settings.scope && typeof cfg.settings.scope === "object") {
+        state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+        ["type", "layout", "size", "corner", "bright", "opacity"].forEach(function (k) {
+          if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
+        });
+      }
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
@@ -1473,6 +1583,13 @@
   iina.onMessage("iinfo-config", function (msg) {
     if (msg && msg.config) applyConfig(msg.config);
     else { applySettings(); }
+    pushConfig();
+  });
+  // the plugin's ⌥⇧W menu cycled the scope — sync the panel + persist
+  iina.onMessage("iinfo-scope-set", function (msg) {
+    if (!msg || !msg.scope) return;
+    state.settings.scope = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, msg.scope);
+    if (state.data) applyData();
     pushConfig();
   });
   function resetForNewFile() {
