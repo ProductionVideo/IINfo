@@ -66,7 +66,7 @@ function render(chrome, name, page, budgetMs) {
     "--headless", "--disable-gpu", "--no-sandbox",
     "--virtual-time-budget=" + (budgetMs || 4000),
     "--dump-dom", "file://" + htmlPath,
-  ], { encoding: "utf8", maxBuffer: 1e8 });
+  ], { encoding: "utf8", maxBuffer: 1e8, stdio: ["ignore", "pipe", "ignore"] });
   const m = dom.match(/RESULT (\{[\s\S]*?\})<\/title>/);
   if (!m) throw new Error(name + ": no RESULT in page\n" + dom.slice(0, 2000));
   // --dump-dom HTML-encodes the title text we stashed the JSON in
