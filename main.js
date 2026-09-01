@@ -28,6 +28,177 @@ const AF_GRAPH =
   "@" + AF_LABEL +
   ":lavfi=[asetnsamples=n=1024:p=0,astats=metadata=1:reset=1,ebur128=metadata=1:peak=true]";
 
+/* ---- inlined ui/config.js — canonical plugin configuration ----
+ * IINA's require() can't be trusted to return module.exports, so the ONE
+ * source of truth for every persisted setting is copied in verbatim.
+ * test/config-inline.test.js drift-guards this against ui/config.js. */
+var iinfocfg = (function () {
+  "use strict";
+
+  // canonical panel keys + default visibility. MUST stay in step with
+  // ui/inspector.js `P.<key>.def` — test/config-schema.test.js diffs the two.
+  var PANEL_KEYS = ["timecode", "frame", "signal", "scope", "codec", "sync",
+                    "deepqc", "compare", "abtech", "markers", "waveform",
+                    "levels", "loudness", "audiofmt"];
+  var PANEL_DEF = {
+    timecode: true, frame: false, signal: true, scope: false, codec: false,
+    sync: false, deepqc: false, compare: false, abtech: false, markers: false,
+    waveform: true, levels: true, loudness: false, audiofmt: false,
+  };
+
+  var DEFAULT_MONO = '"Courier New", Courier, ui-monospace, monospace';
+  var THEMES = ["black", "dark", "graphite", "midnight", "phosphor", "amber",
+                "highcontrast", "light", "auto"];
+  var TEXT_SIZES = ["1", "1.15", "1.3", "1.5", "1.75", "2.1"];
+  var DRAWER_TABS = ["panels", "appearance", "storage", "actions"];
+
+  var SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
+  var SCOPE_LAYOUTS = ["overlay", "bottom", "right"];
+  var SCOPE_SIZES = ["s", "m", "l", "xl", "xxl"];
+  var SCOPE_CORNERS = ["tl", "tr", "bl", "br"];
+  var SCOPE_RANGE = ["limited", "full", "off"];
+
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function num(v, d) { return isNum(v) ? v : d; }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function bool(v, d) { return typeof v === "boolean" ? v : d; }
+  function pick(v, allowed, d) { return allowed.indexOf(v) >= 0 ? v : d; }
+
+  /* ---- sub-object defaults (functions so callers get fresh copies) ---- */
+
+  function scopeDefault() {
+    return { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+  }
+  function deepqcDefault() {
+    return { freeze: true, black: true, outliers: true, range: "limited",
+             brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
+  }
+  function settingsDefault() {
+    return {
+      theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15",
+      markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false,
+      experimental: false,
+      scope: scopeDefault(), deepqc: deepqcDefault(),
+    };
+  }
+  function defaults() {
+    var panels = {};
+    for (var i = 0; i < PANEL_KEYS.length; i++) panels[PANEL_KEYS[i]] = PANEL_DEF[PANEL_KEYS[i]];
+    return {
+      panels: panels,
+      panelOrder: PANEL_KEYS.slice(),
+      wave: { mono: false },
+      settings: settingsDefault(),
+    };
+  }
+
+  /* ---- normalisers ---- */
+
+  function normalizeScope(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      type: pick(s.type, SCOPE_TYPES, "off"),
+      layout: pick(s.layout, SCOPE_LAYOUTS, "overlay"),
+      size: pick(s.size, SCOPE_SIZES, "l"),
+      corner: pick(s.corner, SCOPE_CORNERS, "tr"),
+      bright: clamp(num(s.bright, 0.18), 0.03, 0.8),
+      opacity: clamp(num(s.opacity, 1), 0.2, 1),
+    };
+  }
+
+  function normalizeDeepqc(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      freeze: bool(s.freeze, true),
+      black: bool(s.black, true),
+      outliers: bool(s.outliers, true),
+      range: pick(s.range, SCOPE_RANGE, "limited"),
+      brng: num(s.brng, 0.05),
+      tout: num(s.tout, 0.05),
+      vrep: num(s.vrep, 0.5),
+      freezeDur: num(s.freezeDur, 2),
+      blackDur: num(s.blackDur, 0.5),
+    };
+  }
+
+  function normalizeSettings(s) {
+    s = (s && typeof s === "object") ? s : {};
+    return {
+      theme: pick(s.theme, THEMES, "black"),
+      monoFont: typeof s.monoFont === "string" && s.monoFont ? s.monoFont : DEFAULT_MONO,
+      textSize: pick(String(s.textSize), TEXT_SIZES, "1.15"),
+      markerSidecar: bool(s.markerSidecar, false),
+      drawerTab: pick(s.drawerTab, DRAWER_TABS, "panels"),
+      abtechDiffOnly: bool(s.abtechDiffOnly, false),
+      experimental: bool(s.experimental, false),
+      scope: normalizeScope(s.scope),
+      deepqc: normalizeDeepqc(s.deepqc),
+    };
+  }
+
+  function normalizePanels(p) {
+    p = (p && typeof p === "object") ? p : {};
+    var out = {};
+    for (var i = 0; i < PANEL_KEYS.length; i++) {
+      var k = PANEL_KEYS[i];
+      out[k] = typeof p[k] === "boolean" ? p[k] : PANEL_DEF[k];
+    }
+    return out;
+  }
+
+  // effective panel order: caller's saved order (known keys, de-duped) then any
+  // canonical key it was missing, appended in canonical order.
+  function normalizeOrder(ord) {
+    var seen = {}, out = [];
+    (Array.isArray(ord) ? ord : []).forEach(function (k) {
+      if (PANEL_KEYS.indexOf(k) >= 0 && !seen[k]) { seen[k] = 1; out.push(k); }
+    });
+    for (var i = 0; i < PANEL_KEYS.length; i++) if (!seen[PANEL_KEYS[i]]) out.push(PANEL_KEYS[i]);
+    return out;
+  }
+
+  // Accept anything a prior version may have stored (or nothing) and return the
+  // full canonical shape. `raw` is the parsed preferences["config"] blob.
+  function normalize(raw) {
+    raw = (raw && typeof raw === "object") ? raw : {};
+    var cfg = {
+      panels: normalizePanels(raw.panels),
+      panelOrder: normalizeOrder(raw.panelOrder),
+      wave: { mono: bool(raw.wave && raw.wave.mono, false) },
+      settings: normalizeSettings(raw.settings),
+    };
+    // Deep QC is experimental — the panel can't be visible unless the flag is on
+    if (!cfg.settings.experimental) cfg.panels.deepqc = false;
+    return cfg;
+  }
+
+  // Migration hook for callers that need the legacy per-window geometry that
+  // used to live inside the config blob. Returns {x,y,w,h} or null; never throws.
+  function legacyWin(raw) {
+    var w = raw && raw.win;
+    if (w && isNum(w.w) && isNum(w.h) && w.w > 100 && w.h > 100) {
+      return { x: num(w.x, 0), y: num(w.y, 0), w: w.w, h: w.h };
+    }
+    return null;
+  }
+
+  var API = {
+    PANEL_KEYS: PANEL_KEYS, PANEL_DEF: PANEL_DEF,
+    THEMES: THEMES, TEXT_SIZES: TEXT_SIZES, DRAWER_TABS: DRAWER_TABS,
+    SCOPE_TYPES: SCOPE_TYPES, SCOPE_LAYOUTS: SCOPE_LAYOUTS, SCOPE_SIZES: SCOPE_SIZES,
+    SCOPE_CORNERS: SCOPE_CORNERS,
+    DEFAULT_MONO: DEFAULT_MONO,
+    defaults: defaults, scopeDefault: scopeDefault, deepqcDefault: deepqcDefault,
+    settingsDefault: settingsDefault,
+    normalize: normalize, normalizeScope: normalizeScope, normalizeDeepqc: normalizeDeepqc,
+    normalizeSettings: normalizeSettings, normalizePanels: normalizePanels,
+    normalizeOrder: normalizeOrder,
+    legacyWin: legacyWin,
+  };
+  return API;
+})();
+/* ---- end inlined ui/config.js ---- */
+
 let wantWindow = false;    // user intent: opened via toggle and not yet closed. NOT tied to focus.
 let afActive = false;      // is our audio filter currently in the chain?
 let afWanted = false;      // does the webview want metering right now?
@@ -204,7 +375,6 @@ function teardownFilter() {
 const SCOPE_LABEL = "iinfoscope";
 const SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
 const SCOPE_SIZES = { s: 380, m: 560, l: 760, xl: 1000, xxl: 1320 };
-let scopeCfg = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
 let scopeArmedSig = null;   // the graph string the running instance was built for
 let scopeArmedGen = -1;
 let scopeError = "";
@@ -273,6 +443,10 @@ function scopeGraph(cfg) {
   }[cfg.corner] || ("x=W-w-" + n + ":y=" + n);
   return "@" + SCOPE_LABEL + ":lavfi=[split=2[m][s];" + chain + ";[m][sc]overlay=" + pos + "]";
 }
+
+// live scope config (defaults from the inlined ui/config.js; the web view owns
+// it while the inspector is open, persisted in the shared "config" blob)
+let scopeCfg = iinfocfg.scopeDefault();
 
 function scopePresent() {
   const list = native("vf");
@@ -520,9 +694,7 @@ var deepqc = (function () {
 /* ---- end inlined lib/deepqc.js ---- */
 
 const QC_LABEL = "iinfoqc";
-const QC_DEEP_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited",
-                          brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
-let qcDeep = Object.assign({}, QC_DEEP_DEFAULT);   // detector settings — persisted, harmless at rest
+let qcDeep = iinfocfg.deepqcDefault();   // detector settings — persisted, harmless at rest
 let qcPanelOn = false;         // is the Deep QC panel visible in the webview right now
 // qcRunning is a deliberate, user-started analysis pass. It is NEVER derived from
 // panel visibility or restored from persisted config — opening the panel, loading
@@ -537,21 +709,8 @@ let qcAutoBuf = [];           // finalised auto events not yet merged into qcLis
 let qcFlushTimer = null;
 let qcLiveStats = null;       // last signalstats readout for the panel
 
-function normalizeDeep(s) {
-  s = s || {};
-  const num1 = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
-  return {
-    freeze: s.freeze !== false,
-    black: s.black !== false,
-    outliers: s.outliers !== false,
-    range: (s.range === "full" || s.range === "off") ? s.range : "limited",
-    brng: num1(s.brng, 0.05),
-    tout: num1(s.tout, 0.05),
-    vrep: num1(s.vrep, 0.5),
-    freezeDur: num1(s.freezeDur, 2),
-    blackDur: num1(s.blackDur, 0.5),
-  };
-}
+// thin wrapper — the detector-settings validator lives in the inlined config
+function normalizeDeep(s) { return iinfocfg.normalizeDeepqc(s); }
 
 // pure: build the `vf add` argument for the analysis filter, or null when nothing's enabled
 function qcAnalyzeGraph(cfg) {
@@ -1112,21 +1271,23 @@ function wireMessages() {
 
   onWin("iinfo-config", (cfg) => {
     const wasSidecar = wantSidecar();
-    lastConfig = cfg;
+    // geometry is per-window state — pull it out and store it under its own key,
+    // never into the shared "config" blob (see loadGeomMap / DECISIONS)
+    if (cfg && cfg.win) saveGeom(cfg.win);
+    lastConfig = iinfocfg.normalize(cfg);   // one validator, same as the web view
     // preferences.set alone only persists to disk when a prefs page closes —
     // sync() forces the flush so panel visibility + display settings survive a restart
-    try { preferences.set("config", JSON.stringify(cfg)); preferences.sync(); } catch (e) {}
+    try { preferences.set("config", JSON.stringify(lastConfig)); preferences.sync(); } catch (e) {}
     // enable metering whenever an audio panel wants it
-    const pnl = (cfg && cfg.panels) || {};
+    const pnl = lastConfig.panels;
     afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
     // marker storage location toggled -> write the current list to the new place
     if (wantSidecar() !== wasSidecar && qcList.length) persistMarkers(serializeMarkers());
     // the webview owns the scope config while it's open
-    const sc = cfg && cfg.settings && cfg.settings.scope;
-    if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, sc); tickScope(); }
+    scopeCfg = iinfocfg.normalizeScope(lastConfig.settings.scope); tickScope();
     // Deep QC detector settings persist; whether it's actually running does not —
     // hiding the panel stops an in-progress pass (nothing to see it by anyway)
-    qcDeep = normalizeDeep(cfg && cfg.settings && cfg.settings.deepqc);
+    qcDeep = normalizeDeep(lastConfig.settings.deepqc);
     qcPanelOn = !!pnl.deepqc;
     if (!qcPanelOn) stopQC(); else tickQC();
   });
@@ -1193,12 +1354,54 @@ function wireMessages() {
   });
 }
 
+/* ---- per-window geometry ------------------------------------------------
+ * Window size + position live under their OWN preferences key, keyed by this
+ * player's id — NOT in the shared "config" blob. Two inspectors open at once
+ * (the A/B use case) each persisted to the same blob, so the last one to save
+ * dictated both windows' next frame ("it moved on its own"). See DECISIONS
+ * "Configuration ownership across windows". Falls back to a single shared
+ * "default" slot when there is no global entry (so no player id) — which is
+ * exactly the single-window case where sharing is harmless. */
+let geomMap = null;
+function playerKey() { return myId != null ? "p" + myId : "default"; }
+function loadGeomMap() {
+  if (geomMap) return geomMap;
+  geomMap = {};
+  try {
+    const raw = preferences.get("geom");
+    const p = raw ? JSON.parse(raw) : null;
+    if (p && typeof p === "object") geomMap = p;
+  } catch (e) { geomMap = {}; }
+  // migrate geometry that used to live inside the shared config blob
+  if (legacyWinCfg && !Object.keys(geomMap).length) {
+    geomMap.default = legacyWinCfg;
+    saveGeomMap();
+  }
+  return geomMap;
+}
+function saveGeomMap() {
+  try { preferences.set("geom", JSON.stringify(geomMap)); preferences.sync(); } catch (e) {}
+}
+function saveGeom(g) {
+  if (!g || !(g.w > 100 && g.h > 100)) return;
+  loadGeomMap();
+  geomMap[playerKey()] = {
+    x: Math.round(g.x || 0), y: Math.round(g.y || 0),
+    w: Math.round(g.w), h: Math.round(g.h),
+  };
+  saveGeomMap();
+}
+function myGeom() {
+  const m = loadGeomMap();
+  return m[playerKey()] || m.default || null;
+}
+
 // Restore the window's last size (always) and position (only if it still lands on
 // a screen — the display setup may have changed). The webview reports geometry in
 // DOM coords (origin = top-left of the primary screen, y down); setFrame wants
 // Cocoa coords (origin = bottom-left of the primary screen, y up).
 function restoreGeom() {
-  const g = lastConfig && lastConfig.win;
+  const g = myGeom();
   if (!g || !(g.w > 200 && g.w < 6000 && g.h > 150 && g.h < 6000)) return;
 
   let screens = null;
@@ -1260,7 +1463,7 @@ function openWindow() {
     // Use the saved frame only if the user has actually shaped the window; a
     // frame still at (or near) the old hardcoded 520×880 default is treated as
     // "never customised" so the screen-relative default below takes over.
-    const g = lastConfig && lastConfig.win;
+    const g = myGeom();
     const legacyish = g && Math.abs(g.w - 520) < 40 && Math.abs(g.h - 880) < 40;
     if (g && !legacyish) restoreGeom();
     else defaultGeom();
@@ -1289,16 +1492,15 @@ function toggleWindow() {
 
 /* ------------------------------------------------------------------- wiring */
 
+let legacyWinCfg = null;   // geometry that used to live in the shared blob (migrated below)
 try {
   const saved = preferences.get("config");
-  if (saved) lastConfig = JSON.parse(saved);
-} catch (e) { lastConfig = null; }
-if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
-  scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, lastConfig.settings.scope);
-}
-if (lastConfig && lastConfig.settings) {
-  qcDeep = normalizeDeep(lastConfig.settings.deepqc);   // detector settings only — never auto-runs
-}
+  const parsed = saved ? JSON.parse(saved) : null;
+  legacyWinCfg = iinfocfg.legacyWin(parsed);
+  lastConfig = iinfocfg.normalize(parsed);   // one validator, shared with the web view
+} catch (e) { lastConfig = iinfocfg.normalize(null); }
+scopeCfg = iinfocfg.normalizeScope(lastConfig.settings.scope);
+qcDeep = normalizeDeep(lastConfig.settings.deepqc);   // detector settings only — never auto-runs
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
 // in PINS so JavaScriptCore's GC can't collect it — see the note above onMsg()
