@@ -1112,7 +1112,15 @@
     waveRow.appendChild(wcb);
     waveRow.appendChild(el("span", "set-label", "Sum waveform channels"));
     dgroup.appendChild(waveRow);
-    dgroup.appendChild(el("div", "drawer-note", "† falls back to a system monospace unless the font is installed"));
+
+    var scRow = el("label", "set-row");
+    var scb = el("input"); scb.type = "checkbox"; scb.checked = !!state.settings.markerSidecar;
+    scb.addEventListener("change", function () { state.settings.markerSidecar = scb.checked; pushConfig(); });
+    scRow.appendChild(scb);
+    scRow.appendChild(el("span", "set-label", "Store QC markers beside media (.iinfo.json)"));
+    dgroup.appendChild(scRow);
+
+    dgroup.appendChild(el("div", "drawer-note", "QC markers are otherwise kept in the plugin's data folder. † falls back to a system monospace unless the font is installed"));
     dr.appendChild(dgroup);
   }
 
@@ -1132,6 +1140,7 @@
       if (cfg.settings.theme) state.settings.theme = cfg.settings.theme;
       if (typeof cfg.settings.monoFont === "string") state.settings.monoFont = cfg.settings.monoFont;
       if (cfg.settings.textSize) state.settings.textSize = String(cfg.settings.textSize);
+      if (typeof cfg.settings.markerSidecar === "boolean") state.settings.markerSidecar = cfg.settings.markerSidecar;
     }
     if (cfg && cfg.win) state.win = cfg.win;
     applySettings();
@@ -1591,6 +1600,11 @@
     L.push("[Sync] avsync=" + fmt(pf.avsync * 1000, 1) + " ms  drop dec/out=" + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
       "  mistimed=" + fmtInt(pf.mistimed) + "  delayed=" + fmtInt(pf.delayed));
     L.push("  display=" + fmt(pf.displayFps, 3) + " Hz  est-vf-fps=" + fmt(pf.estVfFps, 3));
+    if (state.markers.list.length) {
+      L.push("");
+      L.push("[QC markers] " + state.markers.list.length);
+      L.push(QCE.toReport(state.markers.list, state.markers.media));
+    }
     return L.join("\n");
   }
   $("b-copy").addEventListener("click", function () {

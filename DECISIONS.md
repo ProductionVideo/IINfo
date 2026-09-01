@@ -6,6 +6,55 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## QC Markers (v0.3.0)
+
+### Generic QC event model, not a marker-specific store
+
+`ui/events.js` is a pure module (`create` / `update` / `sort` / `filter` /
+`prev` / `next` / `serialize` / `toCSV` / `toReport`) with an open `source`
+list and an extensible `meta {}`. Manual markers are just the first producer;
+audio-clip / freeze / black-frame / A-B-difference analysers will call
+`create()` with a different `source` and land on the same timeline, filter and
+export with no schema change. Event shape:
+`{ id, source, type, tMs, frame, fps, tc, durMs, category, severity, note,
+resolved, ts, ref, meta }`.
+
+### The web view owns the list; main.js is thin
+
+While the inspector is open it holds the canonical list (it already receives
+frame / tc / fps / path / A-B state each poll), edits it, and pushes the whole
+serialized blob up on every change (debounced, flushed on close). `main.js`
+only: loads on file-load and hands it down via the poll payload; writes what
+the web view sends straight to disk; captures a minimal well-formed marker for
+the `⌥⇧M` menu path (inspector closed). It never sorts / filters / formats.
+Keeps the most crash-prone file small and mirrors how `d.compare` already
+flows. Cost: the list only persists while / just after the inspector is open
+(plus the tiny standalone path).
+
+### Persistence — internal by default, opt-in sidecar
+
+Default: `@data/qc-<fingerprint>.json`, fingerprint = djb2(`filename|size`).
+No writes next to masters; works on read-only / NAS; more robust to a file
+move than an absolute path. A Settings toggle ("Store QC markers beside media")
+switches reads/writes to `<media>.iinfo.json`; an existing sidecar is honoured
+even with the toggle off; a sidecar write that fails (read-only volume) falls
+back to `@data` and flags it. Network media → internal only. `Export ▾ ▸ Save
+sidecar` always works regardless of the toggle. The serialized `media {}` block
+(path / filename / size / durationMs / fps) is for humans and future
+re-matching; load-time matching is the fingerprint (or the sidecar's own path).
+Flat files in `@data/` (not a subdir) because the plugin file API has no mkdir.
+
+### Dependencies — all in-house
+
+The repo is zero-runtime-dep with no bundler; an npm lib would force a build
+step for the web view. Per the brief's investigate-then-decide rule:
+
+| Problem | Candidate(s) | Licence | Maintenance | Weight | Decision | Reason |
+|---|---|---|---|---|---|---|
+| Timeline marker clustering | d3-array, custom | — | — | — | in-house (~15 lines: sort + %-gap) | trivial; no edge case a lib handles better |
+| CSV serialization | papaparse, csv-stringify | MIT | active | 50–200 KB | in-house `toCSV` (~12 lines, RFC-4180) | need only quote-on-demand of one flat table |
+| Persistence helpers | lowdb, conf | MIT | active | 20 KB+ | `iina.file` + djb2 fingerprint | platform API already covers read/write/exists |
+
 ## A/B Compare (v0.2.0)
 
 ### Cross-window coordination → IINA global entry, not a "leader" player

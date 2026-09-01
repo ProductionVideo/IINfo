@@ -303,7 +303,7 @@ function loadMarkers() {
   qcGen++;
   qcLoadedGen = fileGen;
   qcNeedsId = !id;                 // path wasn't ready — retry when it appears
-  if (wantWindow) { try { standaloneWindow.postMessage("iinfo-data", collect()); } catch (e) {} }
+  // callers push a fresh frame (file-loaded handler / next poll / markHere)
 }
 function maybeLoadMarkers() {
   if (!alive) return;
@@ -555,6 +555,7 @@ function wireMessages() {
 
   onWin("iinfo-ready", () => {
     lastContact = Date.now();
+    maybeLoadMarkers();
     standaloneWindow.postMessage("iinfo-config", { config: lastConfig });
     standaloneWindow.postMessage("iinfo-data", collect());
   });
@@ -579,6 +580,7 @@ function wireMessages() {
   });
 
   onWin("iinfo-config", (cfg) => {
+    const wasSidecar = wantSidecar();
     lastConfig = cfg;
     // preferences.set alone only persists to disk when a prefs page closes —
     // sync() forces the flush so panel visibility + display settings survive a restart
@@ -586,6 +588,8 @@ function wireMessages() {
     // enable metering whenever an audio panel wants it
     const pnl = (cfg && cfg.panels) || {};
     afWanted = !!(pnl.levels || pnl.loudness || pnl.waveform);
+    // marker storage location toggled -> write the current list to the new place
+    if (wantSidecar() !== wasSidecar && qcList.length) persistMarkers(serializeMarkers());
   });
 
   onWin("iinfo-action", (a) => {

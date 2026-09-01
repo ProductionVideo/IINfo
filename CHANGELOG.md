@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.0
+
+**QC markers — mark a problem at the exact frame, navigate them, export the list.**
+
+Built on a generic QC event model (`ui/events.js`) so the same timeline will
+later carry auto-detected events (audio clipping, freezes, black frames, A/B
+technical differences).
+
+- **Mark the current frame** — `⇧M` in the inspector, or `⌥⇧M` anywhere in IINA.
+  Captures position, exact frame, SMPTE timecode, fps, the media identity and —
+  when A/B is linked — the A and B assignment. No dialog; it's instant.
+- **QC Markers panel** (off by default; auto-shows the first time you mark).
+  Severity dot · timecode · frame · category · note per row; click a row to seek
+  there exactly. Inline editor for note / category (Video · Audio · Sync ·
+  Colour · Performance · Content · Other) / severity (info · warning · error) /
+  resolve. **Prev / Next** walk the list and seek precisely. Filter by
+  All / Unresolved / Manual / category.
+- **Timeline** — markers show as coloured ticks over the scrub bar; click to
+  seek, nearby ticks cluster into a count, the selected one stands taller. The
+  timeline follows the panel's filter.
+- **Persistence** — markers survive reopening. Kept in the plugin's data folder
+  by default (keyed by a filename+size fingerprint); a Settings toggle switches
+  to a `<media>.iinfo.json` sidecar that travels with the file.
+- **Export ▾** — copy a report / CSV / full-schema JSON, or save a JSON file or
+  a `.iinfo.json` sidecar to disk. The top-bar **Report** now includes the
+  marker list too.
+
+Needs the `file-system` permission (for sidecar writes). Internals: `ui/events.js`
++ `test/events.test.js` (`npm test`); see `DECISIONS.md`.
+
 ## 0.2.0
 
 **A/B compare — line up two IINA windows and step them together, frame-accurately.**

@@ -20,6 +20,8 @@ persist:
 
 | Panel | Contents |
 |---|---|
+| **A/B Compare** | Assign any two open windows as A / B, offset B from A by whole frames, link transport so play / scrub / frame-step drive both — frame-accurate when stopped |
+| **QC Markers** | Mark the current frame (`⇧M`), tag it (category / severity / note), navigate Prev / Next, see markers on the scrub bar, export report / CSV / JSON |
 | **Timecode & Frames** | SMPTE timecode (NDF + drop-frame), current / total frame, container fps + source, position / duration / remaining, progress |
 | **Frame Metadata** | Picture type (I/P/B), keyframe, progressive / interlaced + field order, repeat flag, GOP / stream SMPTE TC |
 | **Video Signal / Color** | Coded vs display size, DAR / PAR, pixel format, chroma + bit depth, chroma siting, range, matrix, primaries, transfer, signal peak, rotation, 3D / alpha |
@@ -41,8 +43,8 @@ Every jump snaps to the nearest frame.
 
 **Keyboard** (while the inspector window is focused — the keys are relayed to IINA):
 `Space`/`k` play·pause · `←`/`→` seek ∓5 s · `j`/`l` ∓10 s · `,`/`.` frame step ·
-`Shift`+`←`/`→` frame step · `m` mute · `[`/`]` speed · `Home`/`End`.
-Menu bindings: `⌥⇧I` toggle · `⌥⇧←/→` frame step · `⌥⇧S` screenshot.
+`Shift`+`←`/`→` frame step · `m` mute · `[`/`]` speed · `Home`/`End` · `⇧M` mark QC issue.
+Menu bindings: `⌥⇧I` toggle · `⌥⇧←/→` frame step · `⌥⇧S` screenshot · `⌥⇧M` mark QC issue.
 
 **Display:** Black (OLED, default) / Dark / Graphite / Midnight Blue / Green Phosphor
 / Amber CRT / High contrast / Light / Auto · readout font (Courier default + a dozen
