@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.7.0
+
+**Deep QC (experimental) — automated defect detection on the timeline. QC
+reports are now Markdown.**
+
+The **Copy QC report** and the marker **Report** export are now Markdown —
+headed sections and a marker table that pastes cleanly into a ticket, PR or doc.
+CSV and JSON exports are unchanged.
+
+New **Deep QC** panel, behind **Tools ▸ Appearance ▸ Experimental features**
+(off by default — it's a heavy per-frame pass, see below). **▶ Start analysis**
+runs FFmpeg's own analysis filters over the video for as long as you leave it
+running, turning what they find into QC markers:
+
+- **Freeze / held frames** (`freezedetect`) · **black frames** · **broadcast-range
+  violations** (BRNG) · **temporal outliers** (TOUT, noise / dropout) · **vertical
+  line repetition** (VREP) — via `signalstats` + a luma-black test.
+- Detected issues land on the **QC Markers** list and the scrub bar as hollow
+  ticks; filter the list to **Automatic**, walk them, resolve them, export them
+  with the manual markers. **Clear automatic events** removes them in one click.
+- Per-detector toggles + thresholds (Freeze ≥ 1–8 s, Black ≥ 0.2–1 s, Broadcast
+  range Limited / Full / Off). Live readout of Y range + BRNG + TOUT.
+- **Strictly opt-in, every time:** analysis never starts on its own — not on
+  opening the panel, not on loading a file, not on relaunching IINA. It only
+  starts on **▶ Start analysis** and stops itself when the file ends, the panel
+  or window closes, or you hit **■ Stop**. It analyses every decoded frame,
+  which forces software decode paths and costs real performance — especially on
+  large frames — so it's a deliberate pass: play through the section you want
+  checked, then stop. No new permission.
+
+Internals: a labelled analysis-only `@iinfoqc` vf filter with the same
+poll-driven, self-healing lifecycle as the audio filter and video scopes, armed
+only by an explicit start/stop message (never by config or panel state); a pure,
+tested metadata→event bridge (`lib/deepqc.js`, inlined into `main.js` +
+drift-guarded) with span coalescing; `test/deepqc.test.js` +
+`test/deepqc-inline.test.js`.
+
 ## 0.6.0
 
 **Video Scopes — a live waveform / parade / vectorscope / histogram on the picture.**

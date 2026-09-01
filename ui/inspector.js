@@ -763,7 +763,7 @@
     var bNext = el("button", "btn xs", "Next ▶");
     bNext.addEventListener("click", function () { navMarker(1); });
     var filterSel = el("select", "cmp-sel qc-filter");
-    ["All", "Unresolved", "Manual", "Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"]
+    ["All", "Unresolved", "Manual", "Automatic", "Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"]
       .forEach(function (o) { var op = el("option", null, o); op.value = o; filterSel.appendChild(op); });
     filterSel.addEventListener("change", function () {
       state.markerFilter = filterSel.value;
@@ -832,15 +832,19 @@
       mainSpan.addEventListener("click", function () { selectMarker(ev.id); act("seek-abs", ev.tMs / 1000); });
       r.appendChild(mainSpan);
       var tools = el("span", "qc-tools");
-      var bE = el("button", "mini", "edit");
-      bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
+      var auto = ev.source !== "manual";
+      if (!auto) {
+        var bE = el("button", "mini", "edit");
+        bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
+        tools.appendChild(bE);
+      }
       var bR = el("button", "mini", ev.resolved ? "reopen" : "resolve");
       bR.addEventListener("click", function (e) { e.stopPropagation(); mutateMarker(ev.id, function (x) { return QCE.withResolved(x, !x.resolved); }); });
       var bX = el("button", "mini", "✕");
       bX.addEventListener("click", function (e) { e.stopPropagation(); removeMarker(ev.id); });
-      tools.appendChild(bE); tools.appendChild(bR); tools.appendChild(bX);
+      tools.appendChild(bR); tools.appendChild(bX);
       r.appendChild(tools);
-      if (editingId === ev.id) r.appendChild(editor(ev));
+      if (editingId === ev.id && !auto) r.appendChild(editor(ev));
       return r;
     }
     function render() {
@@ -1063,10 +1067,136 @@
     };
   })();
 
+  // -- Deep QC — automated defect detection --------------------------------
+  P.deepqc = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "Deep QC"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    var DQ_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 };
+    function dq() {
+      if (!state.settings.deepqc) state.settings.deepqc = Object.assign({}, DQ_DEFAULT);
+      return state.settings.deepqc;
+    }
+    function set(patch) { state.settings.deepqc = Object.assign({}, dq(), patch); pushConfig(); render(); }
+
+    // analysis is a deliberate, user-started pass — never armed just because this
+    // panel is open, and never resumed on its own after a file change or restart
+    var running = false;
+    var runRow = el("div", "qc-bar");
+    var runBtn = el("button", "btn xs deepqc-run", "▶ Start analysis");
+    runBtn.addEventListener("click", function () {
+      try { iina.postMessage("iinfo-deepqc", { op: running ? "stop" : "start" }); } catch (e) {}
+    });
+    runRow.appendChild(runBtn);
+    body.appendChild(runRow);
+
+    var PERF_NOTE = "Analyses every decoded frame with FFmpeg's own filters — expect reduced hardware-decode performance and dropped frames while it runs. Play through the section you want checked, then Stop.";
+    var perfNote = el("div", "hint", PERF_NOTE);
+    perfNote.style.textAlign = "left";
+    body.appendChild(perfNote);
+
+    var checks = el("div", "deepqc-checks");
+    var checkBoxes = {};
+    [["freeze", "Freeze / held frames"], ["black", "Black frames"], ["outliers", "Temporal outliers + line repeats"]]
+      .forEach(function (o) {
+        var lab = el("label", "deepqc-check");
+        var cb = el("input"); cb.type = "checkbox";
+        cb.addEventListener("change", function () { var q = {}; q[o[0]] = cb.checked; set(q); });
+        lab.appendChild(cb); lab.appendChild(el("span", null, o[1]));
+        checkBoxes[o[0]] = cb; checks.appendChild(lab);
+      });
+    body.appendChild(checks);
+
+    var opts = el("div", "scope-opts");
+    function segRow(label, pairs, key) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var btns = {};
+      pairs.forEach(function (o) {
+        var b = el("button", "btn xs", o[1]);
+        b.addEventListener("click", function () { var q = {}; q[key] = o[0]; set(q); });
+        btns[o[0]] = b; row.appendChild(b);
+      });
+      opts.appendChild(row);
+      return { row: row, btns: btns };
+    }
+    var rangeSeg = segRow("Broadcast range", [["limited", "Limited"], ["full", "Full"], ["off", "Off"]], "range");
+    var freezeSeg = segRow("Freeze ≥", [[1, "1s"], [2, "2s"], [4, "4s"], [8, "8s"]], "freezeDur");
+    var blackSeg = segRow("Black ≥", [[0.2, "0.2s"], [0.5, "0.5s"], [1, "1s"]], "blackDur");
+    body.appendChild(opts);
+
+    var readout = el("div", "deepqc-read", "—");
+    body.appendChild(readout);
+
+    var actions = el("div", "qc-bar");
+    var bClear = el("button", "btn xs", "Clear automatic events");
+    bClear.addEventListener("click", function () {
+      state.markers.list = state.markers.list.filter(function (e) { return e.source === "manual"; });
+      if (typeof pushMarkers === "function") pushMarkers(true);
+      if (typeof mkRefresh === "function") mkRefresh();
+      render();
+    });
+    actions.appendChild(bClear);
+    body.appendChild(actions);
+
+    var note = el("div", "hint bad");
+    note.style.textAlign = "left";
+    note.hidden = true;
+    body.appendChild(note);
+    p.appendChild(body);
+
+    function fmtY(v) { return v == null ? "–" : String(Math.round(v)); }
+    function render() {
+      var c = dq();
+      Object.keys(checkBoxes).forEach(function (k) { checkBoxes[k].checked = c[k] !== false; });
+      Object.keys(rangeSeg.btns).forEach(function (k) { rangeSeg.btns[k].classList.toggle("on", k === (c.range || "limited")); });
+      Object.keys(freezeSeg.btns).forEach(function (k) { freezeSeg.btns[k].classList.toggle("on", Number(k) === (c.freezeDur || 2)); });
+      Object.keys(blackSeg.btns).forEach(function (k) { blackSeg.btns[k].classList.toggle("on", Number(k) === (c.blackDur || 0.5)); });
+      freezeSeg.row.hidden = c.freeze === false;
+      var autoN = 0;
+      for (var i = 0; i < state.markers.list.length; i++) if (state.markers.list[i].source !== "manual") autoN++;
+      bClear.disabled = autoN === 0;
+    }
+
+    return {
+      key: "deepqc", title: "Deep QC", def: false, el: p, _render: render,
+      update: function (d) {
+        render();
+        var q = d.deepqc || {};
+        running = !!q.running;
+        runBtn.textContent = running ? "■ Stop analysis" : "▶ Start analysis";
+        runBtn.classList.toggle("on", running);
+        if (q.error) {
+          badge.textContent = "filter error"; badge.className = "tag diff";
+          note.textContent = "Analysis filter failed: " + q.error; note.hidden = false;
+        } else {
+          note.hidden = true;
+          badge.textContent = q.session ? (q.session + " found") : (running ? (q.active ? "analysing…" : "starting…") : "idle");
+          badge.className = "tag" + (running && q.active ? " ok" : "");
+        }
+        var s = q.stats;
+        if (s) {
+          var bits = ["Y " + fmtY(s.yMin) + "–" + fmtY(s.yMax)];
+          if (s.yAvg != null) bits.push("avg " + fmtY(s.yAvg));
+          if (s.brng != null) bits.push("BRNG " + (s.brng * 100).toFixed(1) + "%");
+          if (s.tout != null) bits.push("TOUT " + s.tout.toFixed(3));
+          readout.textContent = bits.join("  ·  ");
+        } else {
+          readout.textContent = running ? "waiting for frames…" : "not running";
+        }
+      },
+    };
+  })();
+
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "deepqc", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -1098,7 +1228,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 } },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, deepqc: { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 } },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1130,6 +1260,7 @@
     if (!f || f === "All") return null;
     if (f === "Unresolved") return { resolved: false };
     if (f === "Manual") return { source: "manual" };
+    if (f === "Automatic") return { auto: true };
     return { category: f };
   }
   function pushMarkers(now) {
@@ -1245,7 +1376,8 @@
       var lead = g.items[0];
       var worst = g.items.reduce(function (s, e) { return sevRank(e.severity) > sevRank(s) ? e.severity : s; }, "info");
       var selHere = g.items.some(function (e) { return e.id === state.markerSel; });
-      var m = el("span", "scrub-mark sev-" + worst + (g.items.length > 1 ? " cluster" : "") + (selHere ? " sel" : ""));
+      var allAuto = g.items.every(function (e) { return e.source !== "manual"; });
+      var m = el("span", "scrub-mark sev-" + worst + (allAuto ? " auto" : "") + (g.items.length > 1 ? " cluster" : "") + (selHere ? " sel" : ""));
       m.style.left = g.pct + "%";
       if (g.items.length > 1) m.textContent = String(g.items.length);
       m.title = g.items.map(function (e) {
@@ -1333,7 +1465,9 @@
     dr.appendChild(tabRow);
 
     /* Panels — visibility + order */
-    var ord = panelOrder();
+    var ord = panelOrder().filter(function (kk) {
+      return kk !== "deepqc" || state.settings.experimental;   // Deep QC is experimental for now
+    });
     ord.forEach(function (kk, idx) {
       var row = el("div", "panel-order-row");
       var lab = el("label", "por-label");
@@ -1385,6 +1519,8 @@
     var xpcb = el("input"); xpcb.type = "checkbox"; xpcb.checked = !!state.settings.experimental;
     xpcb.addEventListener("change", function () {
       state.settings.experimental = xpcb.checked;
+      if (!xpcb.checked && state.panels.deepqc) state.panels.deepqc = false;
+      applyVisibility(); buildDrawer();
       pushConfig();
       if (state.data) applyData();   // reveal / hide experimental controls
     });
@@ -1392,7 +1528,7 @@
     xpRow.appendChild(el("span", "set-label", "Experimental features"));
     ab.appendChild(xpRow);
 
-    ab.appendChild(el("div", "drawer-note", "Experimental: A/B Visual Compare (flicker / wipe / difference overlay) — usable but rough on performance. † font falls back to a system monospace unless installed."));
+    ab.appendChild(el("div", "drawer-note", "Experimental: Deep QC (automated defect detection — a heavy per-frame analysis pass) and A/B Visual Compare (flicker / wipe / difference overlay). Both are usable but costly on performance. † font falls back to a system monospace unless installed."));
 
     /* Storage */
     var sb = body.storage;
@@ -1418,7 +1554,7 @@
     [["Report", "report"], ["CSV", "csv"], ["JSON", "json"], ["Save JSON…", "save-json"], ["Save sidecar", "save-sidecar"]]
       .forEach(function (o) { actBtn(exRow, o[0], function () { doExport(o[1]); }); });
     body.actions.appendChild(exRow);
-    body.actions.appendChild(el("div", "drawer-note", "Deep-QC scan and video scopes will live here."));
+    body.actions.appendChild(el("div", "drawer-note", "Report and Export are Markdown / CSV / JSON."));
 
     DRAWER_TABS.forEach(function (t) { dr.appendChild(body[t[0]]); });
     showDrawerTab();
@@ -1451,9 +1587,19 @@
           if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
         });
       }
+      if (cfg.settings.deepqc && typeof cfg.settings.deepqc === "object") {
+        var dqs = cfg.settings.deepqc, dqt = state.settings.deepqc;
+        ["freeze", "black", "outliers"].forEach(function (k) { if (typeof dqs[k] === "boolean") dqt[k] = dqs[k]; });
+        if (dqs.range === "limited" || dqs.range === "full" || dqs.range === "off") dqt.range = dqs.range;
+        if (typeof dqs.freezeDur === "number") dqt.freezeDur = dqs.freezeDur;
+        if (typeof dqs.blackDur === "number") dqt.blackDur = dqs.blackDur;
+      }
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
+    // Deep QC is experimental for now — never show it (or let the plugin arm it)
+    // unless Experimental features is on
+    if (!state.settings.experimental) state.panels.deepqc = false;
     applySettings();
     remountPanels(); buildDrawer(); applyVisibility();
     if (state.data) applyData();
@@ -1894,34 +2040,47 @@
   function buildReport() {
     var d = state.data; if (!d) return "No data yet.";
     var v = d.video, a = d.audio, pf = d.perf, r = d.meter.raw || {}, L = [];
-    L.push("IINfo QC report — " + new Date().toISOString());
-    L.push("File: " + orDash(d.file.path));
+    L.push("# IINfo QC report");
     L.push("");
-    L.push("[Timecode] " + ((d.time.dropFrame ? d.time.timecode : d.time.timecodeNDF) || "—") +
-      "  frame " + fmtInt(d.time.frame) + " / " + fmtInt(d.time.frameCount));
-    L.push("  fps " + fmt(d.time.fps, 6) + " (" + orDash(d.time.fpsSource) + ")  " + (d.time.dropFrame ? "DROP-FRAME" : "non-drop"));
-    L.push("  position " + clock(d.time.pos) + " / " + clock(d.time.duration));
+    L.push("- **File:** " + (d.file.path ? "`" + d.file.path + "`" : "—"));
+    L.push("- **Generated:** " + new Date().toISOString());
     L.push("");
-    L.push("[Frame] type=" + orDash(d.frameInfo.pictureType) + " keyframe=" + d.frameInfo.keyFrame +
-      " interlaced=" + d.frameInfo.interlaced + " tff=" + d.frameInfo.tff + " repeat=" + d.frameInfo.repeat);
+    L.push("## Timecode");
     L.push("");
-    L.push("[Video] " + v.w + "x" + v.h + " coded / " + v.dw + "x" + v.dh + " display  PAR " + fmt(v.par, 4) + "  DAR " + orDash(v.aspectName));
-    L.push("  pixfmt=" + orDash(v.pixelformat) + " range=" + orDash(v.colorlevels) + " matrix=" + orDash(v.colormatrix));
-    L.push("  primaries=" + orDash(v.primaries) + " transfer=" + orDash(v.gamma) + " sig-peak=" + orDash(v.sigPeak) + " rotate=" + orDash(v.rotate));
-    L.push("  codec=" + orDash(v.codec) + " decoder=" + orDash(v.decoder) + " hwdec=" + orDash(v.hwdec) + " bitrate=" + bitrate(v.bitrate));
+    L.push("- **TC:** " + ((d.time.dropFrame ? d.time.timecode : d.time.timecodeNDF) || "—") +
+      " — frame " + fmtInt(d.time.frame) + " / " + fmtInt(d.time.frameCount));
+    L.push("- **fps:** " + fmt(d.time.fps, 6) + " (" + orDash(d.time.fpsSource) + ") · " + (d.time.dropFrame ? "drop-frame" : "non-drop"));
+    L.push("- **Position:** " + clock(d.time.pos) + " / " + clock(d.time.duration));
     L.push("");
-    L.push("[Audio] " + orDash(a.codec) + "  " + orDash(a.sampleRate) + " Hz  " + orDash(a.channelCount) + "ch (" +
-      orDash(a.hrChannels || a.channels) + ")  " + orDash(a.format) + "  bitrate=" + bitrate(a.bitrate));
+    L.push("## Frame");
+    L.push("");
+    L.push("- type " + orDash(d.frameInfo.pictureType) + " · keyframe " + d.frameInfo.keyFrame +
+      " · interlaced " + d.frameInfo.interlaced + " · TFF " + d.frameInfo.tff + " · repeat " + d.frameInfo.repeat);
+    L.push("");
+    L.push("## Video");
+    L.push("");
+    L.push("- " + v.w + "×" + v.h + " coded / " + v.dw + "×" + v.dh + " display · PAR " + fmt(v.par, 4) + " · DAR " + orDash(v.aspectName));
+    L.push("- pixfmt " + orDash(v.pixelformat) + " · range " + orDash(v.colorlevels) + " · matrix " + orDash(v.colormatrix));
+    L.push("- primaries " + orDash(v.primaries) + " · transfer " + orDash(v.gamma) + " · sig-peak " + orDash(v.sigPeak) + " · rotate " + orDash(v.rotate));
+    L.push("- codec " + orDash(v.codec) + " · decoder " + orDash(v.decoder) + " · hwdec " + orDash(v.hwdec) + " · bitrate " + bitrate(v.bitrate));
+    L.push("");
+    L.push("## Audio");
+    L.push("");
+    L.push("- " + orDash(a.codec) + " · " + orDash(a.sampleRate) + " Hz · " + orDash(a.channelCount) + "ch (" +
+      orDash(a.hrChannels || a.channels) + ") · " + orDash(a.format) + " · bitrate " + bitrate(a.bitrate));
     if (r["lavfi.r128.I"] != null)
-      L.push("  R128: I=" + r["lavfi.r128.I"] + " LUFS  S=" + r["lavfi.r128.S"] + "  M=" + r["lavfi.r128.M"] + "  LRA=" + r["lavfi.r128.LRA"] + "  TP=" + orDash(r["lavfi.r128.true_peak"]));
+      L.push("- R128: I " + r["lavfi.r128.I"] + " LUFS · S " + r["lavfi.r128.S"] + " · M " + r["lavfi.r128.M"] + " · LRA " + r["lavfi.r128.LRA"] + " · TP " + orDash(r["lavfi.r128.true_peak"]));
     L.push("");
-    L.push("[Sync] avsync=" + fmt(pf.avsync * 1000, 1) + " ms  drop dec/out=" + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
-      "  mistimed=" + fmtInt(pf.mistimed) + "  delayed=" + fmtInt(pf.delayed));
-    L.push("  display=" + fmt(pf.displayFps, 3) + " Hz  est-vf-fps=" + fmt(pf.estVfFps, 3));
+    L.push("## Sync");
+    L.push("");
+    L.push("- avsync " + fmt(pf.avsync * 1000, 1) + " ms · drop dec/out " + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
+      " · mistimed " + fmtInt(pf.mistimed) + " · delayed " + fmtInt(pf.delayed));
+    L.push("- display " + fmt(pf.displayFps, 3) + " Hz · est-vf-fps " + fmt(pf.estVfFps, 3));
     if (state.markers.list.length) {
       L.push("");
-      L.push("[QC markers] " + state.markers.list.length);
-      L.push(QCE.toReport(state.markers.list, state.markers.media));
+      L.push("## QC markers");
+      L.push("");
+      L.push(QCE.toReport(state.markers.list, state.markers.media, { embed: true }));
     }
     return L.join("\n");
   }

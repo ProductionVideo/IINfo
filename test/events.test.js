@@ -169,14 +169,27 @@ test("toCSV quotes cells that need it (RFC 4180)", () => {
   assert.match(lines[1], /"a, b ""c""\nd"$/);
 });
 
-test("toReport is human-readable and counts unresolved", () => {
+test("toReport is Markdown and counts unresolved", () => {
   const list = [
-    Q.create({ tMs: 1000, tc: "00:00:01:00", frame: 25, category: "Video", severity: "error", note: "dropout" }),
+    Q.create({ tMs: 1000, tc: "00:00:01:00", frame: 25, category: "Video", severity: "error", note: "drop | out" }),
     Q.withResolved(Q.create({ tMs: 2000, tc: "00:00:02:00", category: "Audio" }), true),
   ];
   const r = Q.toReport(list, { path: "/v/a.mov" });
-  assert.match(r, /2 markers · 1 unresolved/);
-  assert.match(r, /1\. \[ERROR\] 00:00:01:00  #25  Video/);
-  assert.match(r, /dropout/);
-  assert.match(r, /✓resolved/);
+  assert.match(r, /^# IINfo QC markers/m);
+  assert.match(r, /- \*\*Media:\*\* `\/v\/a\.mov`/);
+  assert.match(r, /\*\*2 markers · 1 unresolved\*\*/);
+  assert.match(r, /^\| # \| Severity \| Timecode \|/m);
+  assert.match(r, /\| 1 \| ERROR \| `00:00:01:00` \| #25 \| Video \| manual \| — \| open \| drop \\\| out \|/);
+  assert.match(r, /✓ resolved/);
+});
+
+test("toReport embed mode drops the h1 + preamble", () => {
+  const r = Q.toReport([Q.create({ tMs: 0 })], null, { embed: true });
+  assert.doesNotMatch(r, /^#/m);
+  assert.doesNotMatch(r, /Media:/);
+  assert.match(r, /\*\*1 marker · 1 unresolved\*\*/);
+});
+
+test("toReport handles an empty list", () => {
+  assert.match(Q.toReport([], null), /_No markers\._/);
 });

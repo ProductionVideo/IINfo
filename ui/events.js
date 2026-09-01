@@ -107,6 +107,7 @@
   function matches(ev, q) {
     if (!q) return true;
     if (q.source != null && ev.source !== q.source) return false;
+    if (q.auto != null && (ev.source !== "manual") !== !!q.auto) return false;
     if (q.category != null && ev.category !== q.category) return false;
     if (q.severity != null && ev.severity !== q.severity) return false;
     if (q.resolved != null && !!ev.resolved !== !!q.resolved) return false;
@@ -170,24 +171,39 @@
     return rows.join("\r\n");
   }
 
-  function toReport(list, media) {
+  function mdCell(v) {
+    return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  }
+  // Markdown. opts.embed -> drop the h1 + media/date preamble (for the bigger report).
+  function toReport(list, media, opts) {
+    opts = opts || {};
     var s = sort(list);
     var unresolved = s.filter(function (e) { return !e.resolved; }).length;
     var L = [];
-    L.push("IINfo QC markers — " + new Date().toISOString());
-    L.push("Media: " + ((media && (media.path || media.filename)) || "—"));
-    L.push(s.length + " marker" + (s.length === 1 ? "" : "s") + " · " + unresolved + " unresolved");
+    if (!opts.embed) {
+      L.push("# IINfo QC markers");
+      L.push("");
+      L.push("- **Media:** " + (media && (media.path || media.filename) ? "`" + (media.path || media.filename) + "`" : "—"));
+      L.push("- **Generated:** " + new Date().toISOString());
+      L.push("");
+    }
+    L.push("**" + s.length + " marker" + (s.length === 1 ? "" : "s") + " · " + unresolved + " unresolved**");
     L.push("");
+    if (!s.length) { L.push("_No markers._"); return L.join("\n"); }
+    L.push("| # | Severity | Timecode | Frame | Category | Source | Dur | Status | Note |");
+    L.push("|--:|----------|----------|------:|----------|--------|-----|--------|------|");
     s.forEach(function (ev, i) {
-      var head = "  " + (i + 1) + ". [" + ev.severity.toUpperCase() + "] " +
-        (ev.tc || (ev.tMs / 1000).toFixed(3) + "s") +
-        (ev.frame != null ? "  #" + ev.frame : "") +
-        "  " + ev.category +
-        (ev.source !== "manual" ? "  (" + ev.source + ")" : "") +
-        (ev.resolved ? "  ✓resolved" : "") +
-        (ev.durMs ? "  +" + (ev.durMs / 1000).toFixed(2) + "s" : "");
-      L.push(head);
-      if (ev.note) L.push("     " + ev.note);
+      L.push("| " + [
+        i + 1,
+        ev.severity.toUpperCase(),
+        "`" + (ev.tc || (ev.tMs / 1000).toFixed(3) + "s") + "`",
+        ev.frame != null ? "#" + ev.frame : "—",
+        ev.category,
+        ev.source !== "manual" ? ev.source : "manual",
+        ev.durMs ? (ev.durMs / 1000).toFixed(2) + "s" : "—",
+        ev.resolved ? "✓ resolved" : "open",
+        ev.note ? mdCell(ev.note) : "—",
+      ].join(" | ") + " |");
     });
     return L.join("\n");
   }
