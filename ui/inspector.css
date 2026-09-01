@@ -208,6 +208,23 @@ body {
 }
 .scrub:hover .scrub-tip, .scrub.dragging .scrub-tip { opacity: 1; }
 
+/* QC markers laid over the scrub bar */
+.scrub-marks { position: absolute; left: 0; right: 0; top: 50%; height: 0; pointer-events: none; }
+.scrub-mark {
+  position: absolute; top: 0; transform: translate(-50%, -50%);
+  width: 3px; height: 12px; border-radius: 2px; background: var(--faint);
+  border: 1px solid var(--panel); pointer-events: auto; cursor: pointer;
+}
+.scrub-mark.sev-info { background: var(--accent); }
+.scrub-mark.sev-warning { background: var(--warn); }
+.scrub-mark.sev-error { background: var(--bad); }
+.scrub-mark:hover { height: 16px; }
+.scrub-mark.sel { height: 18px; width: 4px; box-shadow: 0 0 0 1px var(--text); }
+.scrub-mark.cluster {
+  width: auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  font-family: var(--mono); font-size: 9px; line-height: 12px; color: var(--bg); text-align: center;
+}
+
 /* ================= scroll area ================= */
 main {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;

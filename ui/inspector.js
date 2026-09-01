@@ -987,6 +987,51 @@
     $("report-text").select();
   }
 
+  /* ---- QC markers on the scrub bar ---- */
+  function sevRank(s) { return s === "error" ? 3 : s === "warning" ? 2 : 1; }
+  function renderMarks() {
+    var layer = $("scrub-marks");
+    if (!layer) return;
+    var d = state.data, dur = d && d.time && d.time.duration;
+    var items = (dur && dur > 0) ? QCE.filter(state.markers.list, markerFilterQuery()) : [];
+    var sig = dur + "|" + state.markerSel + "|" +
+      items.map(function (e) { return e.id + ":" + e.tMs + ":" + e.severity; }).sort().join(",");
+    if (layer._sig === sig) return;
+    layer._sig = sig;
+    layer.textContent = "";
+    if (!items.length) return;
+
+    // cluster markers that would render within CLUSTER_PCT of each other
+    var CLUSTER_PCT = 1.4;
+    var sorted = items.slice().sort(function (a, b) { return a.tMs - b.tMs; });
+    var groups = [];
+    sorted.forEach(function (ev) {
+      var pct = Math.max(0, Math.min(100, (ev.tMs / 1000) / dur * 100));
+      var g = groups[groups.length - 1];
+      if (g && pct - g.pct <= CLUSTER_PCT) g.items.push(ev);
+      else groups.push({ pct: pct, items: [ev] });
+    });
+
+    groups.forEach(function (g) {
+      var lead = g.items[0];
+      var worst = g.items.reduce(function (s, e) { return sevRank(e.severity) > sevRank(s) ? e.severity : s; }, "info");
+      var selHere = g.items.some(function (e) { return e.id === state.markerSel; });
+      var m = el("span", "scrub-mark sev-" + worst + (g.items.length > 1 ? " cluster" : "") + (selHere ? " sel" : ""));
+      m.style.left = g.pct + "%";
+      if (g.items.length > 1) m.textContent = String(g.items.length);
+      m.title = g.items.map(function (e) {
+        return (e.tc || clock(e.tMs / 1000)) + " · " + e.category + (e.note ? " · " + e.note : "");
+      }).join("\n");
+      m.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+      m.addEventListener("click", function (e) {
+        e.stopPropagation();
+        selectMarker(lead.id);
+        act("seek-abs", lead.tMs / 1000);
+      });
+      layer.appendChild(m);
+    });
+  }
+
   var mqLight = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
 
   function applySettings() {
@@ -1207,6 +1252,7 @@
     }
 
     document.body.classList.toggle("ganged", ganged());
+    renderMarks();
 
     ORDER.forEach(function (kk) {
       if (!state.panels[kk]) return;
