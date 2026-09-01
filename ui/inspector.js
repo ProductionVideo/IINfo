@@ -970,7 +970,7 @@
     var body = el("div", "body");
 
     function sc() {
-      if (!state.settings.scope) state.settings.scope = { type: "off", size: "m", corner: "tr", opacity: 1 };
+      if (!state.settings.scope) state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
       return state.settings.scope;
     }
     function set(patch) { state.settings.scope = Object.assign({}, sc(), patch); pushConfig(); render(); }
@@ -999,17 +999,26 @@
       opts.appendChild(row);
       return btns;
     }
-    var sizeBtns = pickRow("Size", [["s", "S"], ["m", "M"], ["l", "L"]], "size");
-    var cornBtns = pickRow("Corner", [["tl", "◰", "top-left"], ["tr", "◳", "top-right"], ["bl", "◱", "bottom-left"], ["br", "◲", "bottom-right"]], "corner", true);
+    var layoutBtns = pickRow("Layout", [["overlay", "Overlay"], ["bottom", "Bottom"], ["right", "Side"]], "layout");
+    var sizeBtns = pickRow("Size", [["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"], ["xxl", "XXL"]], "size");
+    var cornRow = pickRow("Corner", [["tl", "◰", "top-left"], ["tr", "◳", "top-right"], ["bl", "◱", "bottom-left"], ["br", "◲", "bottom-right"]], "corner", true);
+    var cornBtns = cornRow;
+    var cornRowEl = opts.lastChild;
 
-    var opaRow = el("div", "scope-row");
-    opaRow.appendChild(el("span", "scope-lbl", "Opacity"));
-    var opa = el("input"); opa.type = "range"; opa.min = "0.4"; opa.max = "1"; opa.step = "0.05";
-    opa.addEventListener("input", function () { set({ opacity: parseFloat(opa.value) }); });
-    opaRow.appendChild(opa);
-    var opaVal = el("span", "scope-lbl mono", "");
-    opaRow.appendChild(opaVal);
-    opts.appendChild(opaRow);
+    function slideRow(label, key, min, max, step, fmt) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var inp = el("input"); inp.type = "range"; inp.min = String(min); inp.max = String(max); inp.step = String(step);
+      inp.addEventListener("input", function () { var q = {}; q[key] = parseFloat(inp.value); set(q); });
+      row.appendChild(inp);
+      var val = el("span", "scope-lbl mono", "");
+      row.appendChild(val);
+      opts.appendChild(row);
+      return { row: row, inp: inp, val: val, fmt: fmt };
+    }
+    var bright = slideRow("Brightness", "bright", 0.03, 0.6, 0.01, function (v) { return Math.round(v / 0.6 * 100) + "%"; });
+    var opa = slideRow("Opacity", "opacity", 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + "%"; });
+
     body.appendChild(opts);
 
     var NOTE = "Renders on the video in this window. CPU filter — it can reduce hardware-decode performance; set to Off when you're done.";
@@ -1020,12 +1029,19 @@
 
     function render() {
       var c = sc();
+      var overlay = (c.layout || "overlay") === "overlay";
       Object.keys(typeBtns).forEach(function (k) { typeBtns[k].classList.toggle("on", k === c.type); });
+      Object.keys(layoutBtns).forEach(function (k) { layoutBtns[k].classList.toggle("on", k === (c.layout || "overlay")); });
       Object.keys(sizeBtns).forEach(function (k) { sizeBtns[k].classList.toggle("on", k === c.size); });
       Object.keys(cornBtns).forEach(function (k) { cornBtns[k].classList.toggle("on", k === c.corner); });
+      var b = typeof c.bright === "number" ? c.bright : 0.18;
+      if (parseFloat(bright.inp.value) !== b) bright.inp.value = String(b);
+      bright.val.textContent = bright.fmt(b);
       var o = typeof c.opacity === "number" ? c.opacity : 1;
-      if (parseFloat(opa.value) !== o) opa.value = String(o);
-      opaVal.textContent = Math.round(o * 100) + "%";
+      if (parseFloat(opa.inp.value) !== o) opa.inp.value = String(o);
+      opa.val.textContent = opa.fmt(o);
+      cornRowEl.hidden = !overlay;
+      opa.row.hidden = !overlay;   // opacity is only meaningful over the picture
       opts.hidden = c.type === "off";
     }
 
@@ -1082,7 +1098,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", size: "m", corner: "tr", opacity: 1 } },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 } },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1430,8 +1446,8 @@
       if (typeof cfg.settings.abtechDiffOnly === "boolean") state.settings.abtechDiffOnly = cfg.settings.abtechDiffOnly;
       if (typeof cfg.settings.experimental === "boolean") state.settings.experimental = cfg.settings.experimental;
       if (cfg.settings.scope && typeof cfg.settings.scope === "object") {
-        state.settings.scope = { type: "off", size: "m", corner: "tr", opacity: 1 };
-        ["type", "size", "corner", "opacity"].forEach(function (k) {
+        state.settings.scope = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
+        ["type", "layout", "size", "corner", "bright", "opacity"].forEach(function (k) {
           if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
         });
       }
@@ -1572,7 +1588,7 @@
   // the plugin's ⌥⇧W menu cycled the scope — sync the panel + persist
   iina.onMessage("iinfo-scope-set", function (msg) {
     if (!msg || !msg.scope) return;
-    state.settings.scope = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, msg.scope);
+    state.settings.scope = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, msg.scope);
     if (state.data) applyData();
     pushConfig();
   });

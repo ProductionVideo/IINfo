@@ -7,8 +7,8 @@ const fs = require("fs");
 const path = require("path");
 
 const src = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
-const m = src.match(/function scopeGraph\(cfg\) \{[\s\S]*?\n\}/);
-assert.ok(m, "could not find scopeGraph() in main.js");
+const m = src.match(/const SCOPE_SIZES = \{[^}]*\};[\s\S]*?function scopeGraph\(cfg\) \{[\s\S]*?\n\}/);
+assert.ok(m, "could not find SCOPE_SIZES + scopeGraph() in main.js");
 // eslint-disable-next-line no-eval
 const scopeGraph = eval('(function () { var SCOPE_LABEL = "iinfoscope"; ' + m[0] + '; return scopeGraph; })()');
 
@@ -23,37 +23,48 @@ test("each scope type selects the right lavfi filter + input format", () => {
   assert.match(scopeGraph({ type: "waveform" }), /format=yuv444p,waveform=mode=column:components=1/);
   assert.match(scopeGraph({ type: "parade" }), /format=gbrp,waveform=.*components=7.*display=parade/);
   assert.match(scopeGraph({ type: "vectorscope" }), /format=yuv444p,vectorscope=mode=color3/);
-  assert.match(scopeGraph({ type: "histogram" }), /format=gbrp,histogram,/);
+  assert.match(scopeGraph({ type: "histogram" }), /format=gbrp,histogram=/);
 });
 
-test("graph is a labelled 1-in/1-out split/overlay", () => {
-  const g = scopeGraph({ type: "waveform" });
+test("scopes get a solid background + a brightness-driven intensity", () => {
+  const g = scopeGraph({ type: "waveform", bright: 0.3 });
+  assert.match(g, /bgopacity=1/);
+  assert.match(g, /intensity=0\.300/);
+  // brightness clamps
+  assert.match(scopeGraph({ type: "waveform", bright: 5 }), /intensity=0\.800/);
+});
+
+test("overlay layout — labelled split/overlay into a picture corner", () => {
+  const g = scopeGraph({ type: "waveform", layout: "overlay", corner: "bl", size: "l" });
   assert.match(g, /^@iinfoscope:lavfi=\[split=2\[m\]\[s\];/);
-  assert.match(g, /\[m\]\[sc\]overlay=/);
-  assert.match(g, /\]$/);
+  assert.match(g, /\[m\]\[sc\]overlay=x=18:y=H-h-18\]$/);
+  assert.match(g, /scale=760:/);            // L box width
+  assert.match(g, /drawbox=/);              // the frame
 });
 
-test("size changes the scope box width", () => {
-  assert.match(scopeGraph({ type: "waveform", size: "s" }), /scale=320:/);
-  assert.match(scopeGraph({ type: "waveform", size: "m" }), /scale=480:/);
-  assert.match(scopeGraph({ type: "waveform", size: "l" }), /scale=680:/);
-  assert.match(scopeGraph({ type: "waveform", size: "bogus" }), /scale=480:/);  // default M
+test("size scales the overlay box; XL / XXL exist", () => {
+  assert.match(scopeGraph({ type: "waveform", size: "s" }), /scale=380:/);
+  assert.match(scopeGraph({ type: "waveform", size: "xl" }), /scale=1000:/);
+  assert.match(scopeGraph({ type: "waveform", size: "xxl" }), /scale=1320:/);
 });
 
-test("vectorscope box is square, others are landscape", () => {
-  assert.match(scopeGraph({ type: "vectorscope", size: "m" }), /scale=480:480/);
-  assert.match(scopeGraph({ type: "waveform", size: "m" }), /scale=480:298/);   // 480 * 0.62
+test("vectorscope overlay box is square", () => {
+  assert.match(scopeGraph({ type: "vectorscope", size: "m" }), /scale=560:560,setsar=1/);
 });
 
-test("corner picks the overlay anchor", () => {
-  assert.match(scopeGraph({ type: "waveform", corner: "tl" }), /overlay=x=16:y=16\]$/);
-  assert.match(scopeGraph({ type: "waveform", corner: "tr" }), /overlay=x=W-w-16:y=16\]$/);
-  assert.match(scopeGraph({ type: "waveform", corner: "bl" }), /overlay=x=16:y=H-h-16\]$/);
-  assert.match(scopeGraph({ type: "waveform", corner: "br" }), /overlay=x=W-w-16:y=H-h-16\]$/);
+test("bottom / side layouts dock the scope in a padded strip (no stack format clash)", () => {
+  const b = scopeGraph({ type: "waveform", layout: "bottom", size: "l" });
+  assert.match(b, /\[m\]pad=w=iw:h=ceil\(ih\*1\.32/);
+  assert.match(b, /scale2ref=w=main_w:h=main_h\*0\.2424/);   // 0.32 / 1.32
+  assert.match(b, /overlay=x=\(W-w\)\/2:y=H-h\]$/);
+  const r = scopeGraph({ type: "waveform", layout: "right", size: "m" });
+  assert.match(r, /pad=w=ceil\(iw\*1\.24/);
+  assert.match(r, /scale2ref=w=main_w\*0\.1935:h=main_h/);   // 0.24 / 1.24
+  assert.match(r, /overlay=x=W-w:y=\(H-h\)\/2\]$/);
 });
 
-test("opacity below 1 inserts a colorchannelmixer alpha step", () => {
-  assert.match(scopeGraph({ type: "waveform", opacity: 0.6 }), /format=rgba,colorchannelmixer=aa=0\.60\[sc\]/);
+test("overlay opacity < 1 inserts a colorchannelmixer alpha step; docked ignores it", () => {
+  assert.match(scopeGraph({ type: "waveform", opacity: 0.6 }), /colorchannelmixer=aa=0\.60/);
   assert.doesNotMatch(scopeGraph({ type: "waveform", opacity: 1 }), /colorchannelmixer/);
-  assert.doesNotMatch(scopeGraph({ type: "waveform" }), /colorchannelmixer/);
+  assert.doesNotMatch(scopeGraph({ type: "waveform", layout: "bottom", opacity: 0.5 }), /colorchannelmixer/);
 });

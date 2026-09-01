@@ -203,7 +203,8 @@ function teardownFilter() {
 
 const SCOPE_LABEL = "iinfoscope";
 const SCOPE_TYPES = ["off", "waveform", "parade", "vectorscope", "histogram"];
-let scopeCfg = { type: "off", size: "m", corner: "tr", opacity: 1 };
+const SCOPE_SIZES = { s: 380, m: 560, l: 760, xl: 1000, xxl: 1320 };
+let scopeCfg = { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
 let scopeArmedSig = null;   // the graph string the running instance was built for
 let scopeArmedGen = -1;
 let scopeError = "";
@@ -211,20 +212,59 @@ let scopeError = "";
 // pure: build the mpv `vf add` argument for a scope config, or null for "off"
 function scopeGraph(cfg) {
   if (!cfg || !cfg.type || cfg.type === "off") return null;
-  const boxW = { s: 320, m: 480, l: 680 }[cfg.size] || 480;
-  let pre, inner, boxH;
+  const b = Math.max(0.03, Math.min(0.8, typeof cfg.bright === "number" ? cfg.bright : 0.18)).toFixed(3);
+  let pre, inner, ratio;   // ratio = box height / width
   switch (cfg.type) {
-    case "waveform":    pre = "format=yuv444p"; inner = "waveform=mode=column:components=1:filter=lowpass:graticule=green:flags=numbers"; boxH = Math.round(boxW * 0.62); break;
-    case "parade":      pre = "format=gbrp";    inner = "waveform=mode=column:components=7:filter=lowpass:display=parade:graticule=green"; boxH = Math.round(boxW * 0.62); break;
-    case "vectorscope": pre = "format=yuv444p"; inner = "vectorscope=mode=color3:graticule=green:flags=name"; boxH = boxW; break;
-    case "histogram":   pre = "format=gbrp";    inner = "histogram"; boxH = Math.round(boxW * 0.62); break;
+    case "waveform":
+      pre = "format=yuv444p";
+      inner = "waveform=mode=column:components=1:filter=lowpass:graticule=green:flags=numbers+dots:intensity=" + b + ":bgopacity=1";
+      ratio = 0.82; break;
+    case "parade":
+      pre = "format=gbrp";
+      inner = "waveform=mode=column:components=7:filter=lowpass:display=parade:graticule=green:flags=numbers:intensity=" + b + ":bgopacity=1";
+      ratio = 0.82; break;
+    case "vectorscope":
+      pre = "format=yuv444p";
+      inner = "vectorscope=mode=color3:graticule=green:flags=name:intensity=" + Math.min(1, b * 3).toFixed(3) + ":bgopacity=1";
+      ratio = 1; break;
+    case "histogram":
+      pre = "format=gbrp";
+      inner = "histogram=fgopacity=0.9:bgopacity=1";
+      ratio = 0.75; break;
     default: return null;
   }
-  let chain = "[s]scale=640:-2," + pre + "," + inner + ",scale=" + boxW + ":" + boxH + ",setsar=1";
-  const opa = (typeof cfg.opacity === "number" && cfg.opacity < 1) ? Math.max(0, Math.min(1, cfg.opacity)) : null;
+  const layout = cfg.layout || "overlay";
+  const scope = pre + "," + inner;
+
+  if (layout === "bottom" || layout === "right") {
+    // dock the scope in its own strip — the picture keeps its format, the scope
+    // is scaled (scale2ref) into the space `pad` adds, so hstack/vstack format
+    // clashes are avoided entirely
+    const frac = { s: 0.16, m: 0.24, l: 0.32, xl: 0.42, xxl: 0.55 }[cfg.size] || 0.32;
+    const strip = (frac / (1 + frac)).toFixed(4);   // strip / padded-frame
+    if (layout === "bottom") {
+      return "@" + SCOPE_LABEL + ":lavfi=[split=2[m][s];" +
+        "[s]scale=1280:-2," + scope + ",setsar=1[sc0];" +
+        "[m]pad=w=iw:h=ceil(ih*" + (1 + frac).toFixed(4) + "/2)*2:x=0:y=0:color=black[mp];" +
+        "[sc0][mp]scale2ref=w=main_w:h=main_h*" + strip + "[scr][mpr];" +
+        "[mpr][scr]overlay=x=(W-w)/2:y=H-h]";
+    }
+    return "@" + SCOPE_LABEL + ":lavfi=[split=2[m][s];" +
+      "[s]scale=900:-2," + scope + ",setsar=1[sc0];" +
+      "[m]pad=w=ceil(iw*" + (1 + frac).toFixed(4) + "/2)*2:h=ih:x=0:y=0:color=black[mp];" +
+      "[sc0][mp]scale2ref=w=main_w*" + strip + ":h=main_h[scr][mpr];" +
+      "[mpr][scr]overlay=x=W-w:y=(H-h)/2]";
+  }
+
+  // overlay in a picture corner
+  const boxW = SCOPE_SIZES[cfg.size] || SCOPE_SIZES.l;
+  const boxH = Math.round(boxW * ratio);
+  let chain = "[s]scale=960:-2," + scope + ",scale=" + boxW + ":" + boxH + ",setsar=1," +
+    "drawbox=x=0:y=0:w=iw:h=ih:color=0x666666@0.9:t=2";
+  const opa = (typeof cfg.opacity === "number" && cfg.opacity < 1) ? Math.max(0.2, Math.min(1, cfg.opacity)) : null;
   if (opa != null) chain += ",format=rgba,colorchannelmixer=aa=" + opa.toFixed(2);
   chain += "[sc]";
-  const n = 16;
+  const n = 18;
   const pos = {
     tl: "x=" + n + ":y=" + n,
     tr: "x=W-w-" + n + ":y=" + n,
@@ -688,7 +728,7 @@ function wireMessages() {
     if (wantSidecar() !== wasSidecar && qcList.length) persistMarkers(serializeMarkers());
     // the webview owns the scope config while it's open
     const sc = cfg && cfg.settings && cfg.settings.scope;
-    if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, sc); tickScope(); }
+    if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, sc); tickScope(); }
   });
 
   onWin("iinfo-action", (a) => {
@@ -817,7 +857,7 @@ try {
   if (saved) lastConfig = JSON.parse(saved);
 } catch (e) { lastConfig = null; }
 if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
-  scopeCfg = Object.assign({ type: "off", size: "m", corner: "tr", opacity: 1 }, lastConfig.settings.scope);
+  scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, lastConfig.settings.scope);
 }
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
