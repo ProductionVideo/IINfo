@@ -52,6 +52,7 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
+[hidden] { display: none !important; }
 /* readouts stay selectable so a value can be copied out */
 .ess-tc, .ess-frame, .kv dt, .kv dd, .panel .body, dialog textarea,
 input, .cap, .meter-val, .meter-label {
@@ -354,18 +355,10 @@ body.ganged .jump input { border-color: var(--accent); }
 /* ================= QC markers panel ================= */
 .qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .qc-filter { flex: 0 1 120px; height: 26px; }
-.qc-export { position: relative; margin-left: auto; }
-.qc-export-menu {
-  position: absolute; right: 0; top: 30px; z-index: 5; min-width: 170px;
-  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
-  padding: 4px; display: flex; flex-direction: column; gap: 2px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.35);
+.qc-export-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 10px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
 }
-.qc-export-item {
-  text-align: left; background: none; border: 0; color: var(--text);
-  font: inherit; font-size: 12px; padding: 6px 8px; border-radius: 5px; cursor: pointer;
-}
-.qc-export-item:hover { background: var(--border); }
 
 .qc-list { display: flex; flex-direction: column; }
 .qc-row {

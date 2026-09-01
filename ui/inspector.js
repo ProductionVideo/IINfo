@@ -747,23 +747,25 @@
       state.markerFilter = filterSel.value;
       render(); if (typeof renderMarks === "function") renderMarks();
     });
-    var exportWrap = el("span", "qc-export");
     var bExport = el("button", "btn xs", "Export ▾");
-    var exportMenu = el("div", "qc-export-menu");
-    exportMenu.hidden = true;
+    bExport.style.marginLeft = "auto";
+    var exportRow = el("div", "qc-export-row");
+    exportRow.hidden = true;
     [["Copy report", "report"], ["Copy CSV", "csv"], ["Copy JSON", "json"],
-     ["Save JSON…", "save-json"], ["Save sidecar (.iinfo.json)", "save-sidecar"]].forEach(function (o) {
-      var mi = el("button", "qc-export-item", o[0]);
-      mi.addEventListener("click", function () { exportMenu.hidden = true; doExport(o[1]); });
-      exportMenu.appendChild(mi);
+     ["Save JSON…", "save-json"], ["Save sidecar", "save-sidecar"]].forEach(function (o) {
+      var mi = el("button", "btn xs", o[0]);
+      mi.addEventListener("click", function () { exportRow.hidden = true; bExport.textContent = "Export ▾"; doExport(o[1]); });
+      exportRow.appendChild(mi);
     });
-    bExport.addEventListener("click", function (e) { e.stopPropagation(); exportMenu.hidden = !exportMenu.hidden; });
-    document.addEventListener("click", function () { exportMenu.hidden = true; });
-    exportWrap.appendChild(bExport); exportWrap.appendChild(exportMenu);
+    bExport.addEventListener("click", function () {
+      exportRow.hidden = !exportRow.hidden;
+      bExport.textContent = exportRow.hidden ? "Export ▾" : "Export ▴";
+    });
 
     bar.appendChild(bMark); bar.appendChild(bPrev); bar.appendChild(bNext);
-    bar.appendChild(filterSel); bar.appendChild(exportWrap);
+    bar.appendChild(filterSel); bar.appendChild(bExport);
     body.appendChild(bar);
+    body.appendChild(exportRow);
 
     var listEl = el("div", "qc-list");
     body.appendChild(listEl);
@@ -792,19 +794,24 @@
       var box = el("div", "qc-edit");
       var note = el("input", "qc-note-in");
       note.type = "text"; note.value = ev.note; note.placeholder = "note";
-      function commit() { if (note.value !== ev.note) mutateMarker(ev.id, function (x) { return QCE.update(x, { note: note.value }); }); }
-      note.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Enter") { commit(); editingId = null; idSig = ""; render(); } });
+      var committed = false;
+      function commit() { if (!committed && note.value !== ev.note) { committed = true; mutateMarker(ev.id, function (x) { return QCE.update(x, { note: note.value }); }); } }
+      note.addEventListener("keydown", function (e) {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); commit(); closeEditor(); }
+      });
       note.addEventListener("blur", commit);
       box.appendChild(note);
       var row2 = el("div", "qc-edit-row");
       row2.appendChild(mkSelect(QCE.CATEGORIES, ev.category, function (v) { mutateMarker(ev.id, function (x) { return QCE.update(x, { category: v }); }); }));
       row2.appendChild(mkSelect(QCE.SEVERITIES, ev.severity, function (v) { mutateMarker(ev.id, function (x) { return QCE.update(x, { severity: v }); }); }));
       var done = el("button", "btn xs", "done");
-      done.addEventListener("click", function () { commit(); editingId = null; idSig = ""; render(); });
+      done.addEventListener("click", function () { commit(); closeEditor(); });
       row2.appendChild(done);
       box.appendChild(row2);
       return box;
     }
+    function closeEditor() { editingId = null; idSig = ""; render(); }
     function rowFor(ev) {
       var r = el("div", "qc-row" + (state.markerSel === ev.id ? " sel" : "") + (ev.resolved ? " done" : ""));
       r.appendChild(el("span", "qc-dot " + ev.severity));
@@ -838,10 +845,12 @@
       if (content === contentSig) return;
       idSig = ids; contentSig = content;
 
+      var keepScroll = mainEl ? mainEl.scrollTop : null;
       listEl.textContent = "";
       empty.hidden = state.markers.list.length > 0;
       if (state.markers.list.length && !items.length) listEl.appendChild(el("div", "hint", "Nothing matches this filter."));
       items.forEach(function (ev) { listEl.appendChild(rowFor(ev)); });
+      if (keepScroll != null) mainEl.scrollTop = keepScroll;
     }
 
     return {
