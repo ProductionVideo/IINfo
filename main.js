@@ -12,7 +12,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
 
-console.log("IINfo: main entry loading (v0.6.0)");
+console.log("IINfo: main entry loading (v0.7.0)");
 
 // iina.global is present only when Info.json declares a "globalEntry". Every
 // A/B-compare code path below is a guarded no-op without it, so single-player
@@ -323,6 +323,349 @@ function cycleScope() {
   core.osd("IINfo scope: " + scopeCfg.type);
 }
 
+/* -------------------------------------------------------------- deep QC
+ *
+ * @iinfoqc — an analysis-only labelled video filter (signalstats + freezedetect).
+ * The picture passes through untouched; each sub-filter attaches lavfi.* frame
+ * metadata that collect() reads every poll and feeds to the deepqc bridge below.
+ * Deliberate mode: the filter is only installed while the Deep QC panel is open,
+ * because per-frame analysis forces software paths and costs real performance.
+ * Lifecycle is poll-driven and self-healing, exactly like tickScope().
+ *
+ * lib/deepqc.js is inlined here verbatim (IINA's require() can't be trusted to
+ * return module.exports); test/deepqc-inline.test.js guards the copy against drift.
+ */
+
+/* ---- inlined from lib/deepqc.js — keep in sync (test/deepqc-inline.test.js) ---- */
+var deepqc = (function () {
+  "use strict";
+
+  var MERGE_GAP = 1000;   // ms — a clean gap shorter than this keeps one span
+
+  function n(v, dflt) { return typeof v === "number" && isFinite(v) ? v : dflt; }
+  function fnum(s) { var x = parseFloat(s); return isFinite(x) ? x : null; }
+  function sfnum(m, k) { return fnum(m["lavfi.signalstats." + k]); }
+
+  // signalstats reports luma in the source's native range; infer the ceiling so
+  // the black test works for 8 / 10 / 12-bit without a format-conversion cost
+  function lumaScale(ymax) {
+    if (ymax == null) return 255;
+    if (ymax > 1023) return 4095;
+    if (ymax > 255) return 1023;
+    return 255;
+  }
+
+  // span-tracked metrics: value normalised so "dirty" == value > threshold
+  var METRICS = {
+    brng: {
+      source: "signalstats", type: "range-error", category: "Colour", severity: "warning",
+      read: function (m) { return sfnum(m, "BRNG"); },
+      thr: function (o) { return n(o.brng, 0.05); },
+      minDur: function () { return 300; },
+      active: function (o) { return (o.range || "limited") === "limited"; },
+      note: function (pk) { return "broadcast-range violation (BRNG " + (pk * 100).toFixed(1) + "%)"; },
+    },
+    tout: {
+      source: "signalstats", type: "noise", category: "Video", severity: "warning",
+      read: function (m) { return sfnum(m, "TOUT"); },
+      thr: function (o) { return n(o.tout, 0.05); },
+      minDur: function () { return 300; },
+      active: function (o) { return o.outliers !== false; },
+      note: function (pk) { return "temporal outliers (TOUT " + pk.toFixed(3) + ")"; },
+    },
+    vrep: {
+      source: "signalstats", type: "line-repeat", category: "Video", severity: "warning",
+      read: function (m) { return sfnum(m, "VREP"); },
+      thr: function (o) { return n(o.vrep, 0.5); },
+      minDur: function () { return 300; },
+      active: function (o) { return o.outliers !== false; },
+      note: function (pk) { return "vertical line repetition (VREP " + pk.toFixed(3) + ")"; },
+    },
+    black: {
+      source: "video", type: "black-frame", category: "Video", severity: "error",
+      read: function (m) {
+        var y = sfnum(m, "YMAX");
+        return y == null ? null : 1 - y / lumaScale(y);
+      },
+      thr: function (o) { return 1 - n(o.blackLevel, 24) / 255; },
+      minDur: function (o) { return Math.max(150, Math.round(n(o.blackDur, 0.5) * 1000)); },
+      active: function (o) { return o.black !== false; },
+      note: function (pk, durMs) {
+        return "black frames" + (durMs ? " (" + (durMs / 1000).toFixed(1) + "s)" : "");
+      },
+    },
+  };
+  var METRIC_KEYS = ["brng", "tout", "vrep", "black"];
+
+  function blankSpan() { return { start: null, last: null, peak: 0 }; }
+
+  function initState() {
+    return { seenFreeze: {}, seenBlack: {}, spans: { brng: blankSpan(), tout: blankSpan(), vrep: blankSpan(), black: blankSpan() } };
+  }
+
+  function cloneState(s) {
+    s = s || {};
+    var out = { seenFreeze: {}, seenBlack: {}, spans: {} }, k;
+    for (k in (s.seenFreeze || {})) if (Object.prototype.hasOwnProperty.call(s.seenFreeze, k)) out.seenFreeze[k] = s.seenFreeze[k];
+    for (k in (s.seenBlack || {})) if (Object.prototype.hasOwnProperty.call(s.seenBlack, k)) out.seenBlack[k] = s.seenBlack[k];
+    var src = s.spans || {};
+    for (var i = 0; i < METRIC_KEYS.length; i++) {
+      var m = METRIC_KEYS[i], sp = src[m] || {};
+      out.spans[m] = { start: sp.start != null ? sp.start : null, last: sp.last != null ? sp.last : null, peak: sp.peak || 0 };
+    }
+    return out;
+  }
+
+  // advance one span by a sample -> { sp, span|null } where span = {tMs,durMs,peak}
+  function stepSpan(sp, v, thr, minDur, posMs) {
+    var out = { start: sp.start, last: sp.last, peak: sp.peak };
+    // a backward seek abandons an in-progress span (it was mid-measurement)
+    if (out.start != null && posMs < out.start) out = blankSpan();
+
+    var span = null;
+    var dirty = v != null && v > thr;
+    if (dirty) {
+      if (out.start == null) { out.start = posMs; out.last = posMs; out.peak = v; }
+      else if (posMs - out.last > MERGE_GAP) {
+        if (out.last - out.start >= minDur) span = { tMs: out.start, durMs: out.last - out.start, peak: out.peak };
+        out = { start: posMs, last: posMs, peak: v };
+      } else {
+        out.last = posMs;
+        if (v > out.peak) out.peak = v;
+      }
+    } else if (out.start != null && posMs - out.last > MERGE_GAP) {
+      if (out.last - out.start >= minDur) span = { tMs: out.start, durMs: out.last - out.start, peak: out.peak };
+      out = blankSpan();
+    }
+    return { sp: out, span: span };
+  }
+
+  function spanEvent(m, e) {
+    var d = METRICS[m];
+    return {
+      source: d.source, type: d.type,
+      tMs: Math.max(0, Math.round(e.tMs)),
+      durMs: Math.max(0, Math.round(e.durMs)),
+      category: d.category, severity: d.severity,
+      note: d.note(e.peak, Math.max(0, Math.round(e.durMs))),
+      meta: { auto: true, peak: e.peak },
+    };
+  }
+
+  function analyze(meta, state, opts, posMs) {
+    meta = meta || {};
+    opts = opts || {};
+    posMs = Math.max(0, Math.round(posMs || 0));
+    var st = cloneState(state);
+    var events = [];
+
+    // ---- freeze (freezedetect emits sparsely; mpv keeps the last dict, so we
+    //      re-see the same freeze_start across polls — dedup on its value)
+    if (opts.freeze !== false) {
+      var fs = fnum(meta["lavfi.freezedetect.freeze_start"]);
+      if (fs != null) {
+        var fd = fnum(meta["lavfi.freezedetect.freeze_duration"]);
+        var fdMs = fd != null ? Math.round(fd * 1000) : 0;
+        var fkey = Math.round(fs * 1000);
+        if (st.seenFreeze[fkey] == null || fdMs > st.seenFreeze[fkey]) {
+          st.seenFreeze[fkey] = fdMs;
+          events.push({
+            source: "freezedetect", type: "freeze",
+            tMs: Math.max(0, Math.round(fs * 1000)), durMs: fdMs,
+            category: "Video", severity: "warning",
+            note: fdMs ? "frozen frames (" + (fdMs / 1000).toFixed(1) + "s)" : "frozen frames",
+            meta: { auto: true },
+          });
+        }
+      }
+    }
+
+    // ---- signalstats + luma-black spans
+    for (var i = 0; i < METRIC_KEYS.length; i++) {
+      var m = METRIC_KEYS[i], d = METRICS[m];
+      if (!d.active(opts)) { st.spans[m] = blankSpan(); continue; }
+      var r = stepSpan(st.spans[m], d.read(meta), d.thr(opts), d.minDur(opts), posMs);
+      st.spans[m] = r.sp;
+      if (r.span) events.push(spanEvent(m, r.span));
+    }
+
+    return { events: events, state: st };
+  }
+
+  // close any spans still open — call on pause / end-of-file / teardown
+  function flush(state) {
+    var st = cloneState(state);
+    var events = [];
+    for (var i = 0; i < METRIC_KEYS.length; i++) {
+      var m = METRIC_KEYS[i], sp = st.spans[m];
+      if (sp && sp.start != null && sp.last != null && sp.last - sp.start >= METRICS[m].minDur({})) {
+        events.push(spanEvent(m, { tMs: sp.start, durMs: sp.last - sp.start, peak: sp.peak }));
+      }
+      st.spans[m] = blankSpan();
+    }
+    return { events: events, state: st };
+  }
+
+  function liveStats(meta) {
+    if (!meta) return null;
+    function g(k) { return sfnum(meta, k); }
+    var ymin = g("YMIN"), ymax = g("YMAX"), yavg = g("YAVG");
+    var brng = g("BRNG"), tout = g("TOUT"), vrep = g("VREP");
+    if (ymin == null && ymax == null && brng == null && tout == null) return null;
+    return { yMin: ymin, yMax: ymax, yAvg: yavg, brng: brng, tout: tout, vrep: vrep };
+  }
+
+  return { initState: initState, analyze: analyze, flush: flush, liveStats: liveStats };
+})();
+/* ---- end inlined lib/deepqc.js ---- */
+
+const QC_LABEL = "iinfoqc";
+const QC_DEEP_DEFAULT = { on: false, freeze: true, black: true, outliers: true, range: "limited",
+                          brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
+let qcDeep = Object.assign({}, QC_DEEP_DEFAULT);
+let qcAnalyzeState = deepqc.initState();
+let qcArmedSig = null;        // the graph string the running @iinfoqc was built for
+let qcArmedGen = -1;
+let qcAnalyzeError = "";
+let qcAutoBuf = [];           // finalised auto events not yet merged into qcList
+let qcFlushTimer = null;
+let qcLiveStats = null;       // last signalstats readout for the panel
+
+function normalizeDeep(s, panelOn) {
+  s = s || {};
+  const num1 = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
+  return {
+    on: !!panelOn,
+    freeze: s.freeze !== false,
+    black: s.black !== false,
+    outliers: s.outliers !== false,
+    range: (s.range === "full" || s.range === "off") ? s.range : "limited",
+    brng: num1(s.brng, 0.05),
+    tout: num1(s.tout, 0.05),
+    vrep: num1(s.vrep, 0.5),
+    freezeDur: num1(s.freezeDur, 2),
+    blackDur: num1(s.blackDur, 0.5),
+  };
+}
+
+// pure: build the `vf add` argument for the analysis filter, or null when off
+function qcAnalyzeGraph(cfg) {
+  if (!cfg || !cfg.on) return null;
+  const parts = [];
+  if (cfg.outliers || cfg.range !== "off" || cfg.black) parts.push("signalstats=stat=tout+vrep+brng");
+  if (cfg.freeze) {
+    const d = Math.max(0.5, (typeof cfg.freezeDur === "number" && isFinite(cfg.freezeDur)) ? cfg.freezeDur : 2);
+    parts.push("freezedetect=d=" + d);
+  }
+  if (!parts.length) return null;
+  return "@" + QC_LABEL + ":lavfi=[" + parts.join(",") + "]";
+}
+
+function qcPresent() {
+  const list = native("vf");
+  if (!Array.isArray(list)) return false;
+  return list.some((f) => f && (f.label === QC_LABEL || f.label === "@" + QC_LABEL));
+}
+function qcFilterRemove() {
+  if (!alive) return;
+  try { mpv.command("vf", ["remove", "@" + QC_LABEL]); } catch (e) {}
+  qcArmedSig = null; qcArmedGen = -1;
+}
+function tickQC() {
+  if (!alive) return;
+  const want = wantWindow && qcDeep.on;
+  const sig = want ? qcAnalyzeGraph(qcDeep) : null;
+  if (!sig) {
+    if (qcPresent()) { qcFilterRemove(); flushQC(true); }
+    return;
+  }
+  const present = qcPresent();
+  if (present && qcArmedSig === sig && qcArmedGen === fileGen) return;
+  if (present) { qcFilterRemove(); return; }   // config / clip changed — re-add next tick
+  try {
+    mpv.command("vf", ["add", sig]);
+    qcArmedSig = sig; qcArmedGen = fileGen; qcAnalyzeError = "";
+    qcAnalyzeState = deepqc.initState();
+  } catch (e) {
+    qcAnalyzeError = String(e); qcArmedSig = null;
+    console.log("IINfo: deep-QC `vf add` — " + e);
+  }
+}
+
+function qcDedupKey(e) { return e.source + "|" + e.type + "|" + Math.round(e.tMs / 500); }
+
+function finalizeQC(raw) {
+  const fps = num("container-fps") || num("estimated-vf-fps") || raw.fps || null;
+  const frame = fps ? Math.round((raw.tMs / 1000) * fps) : null;
+  const tc = frame != null && fps ? framesToTimecode(frame, fps) : null;
+  return {
+    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+    source: raw.source, type: raw.type,
+    tMs: Math.max(0, Math.round(raw.tMs)),
+    frame: frame,
+    fps: fps || null,
+    tc: tc && tc.indexOf("-") < 0 ? tc : null,
+    durMs: (typeof raw.durMs === "number" && raw.durMs >= 0) ? Math.round(raw.durMs) : null,
+    category: raw.category || "Video",
+    severity: raw.severity || "warning",
+    note: raw.note || "",
+    resolved: false, ts: Date.now(), ref: null,
+    meta: Object.assign({ auto: true }, raw.meta || {}),
+  };
+}
+
+// buffer a partial auto event, de-duplicating against qcList and the buffer;
+// a richer duration (freeze/black corrected at its end) supersedes a bare one
+function qcBufferEvent(rawPartial) {
+  const e = finalizeQC(rawPartial);
+  const key = qcDedupKey(e);
+  for (let i = 0; i < qcList.length; i++) {
+    const x = qcList[i];
+    if (x.source !== "manual" && qcDedupKey(x) === key) {
+      if ((e.durMs || 0) > (x.durMs || 0)) {
+        qcList[i] = Object.assign({}, x, { durMs: e.durMs, note: e.note });
+        qcGen++;
+      }
+      return;
+    }
+  }
+  for (let j = 0; j < qcAutoBuf.length; j++) {
+    if (qcDedupKey(qcAutoBuf[j]) === key) {
+      if ((e.durMs || 0) > (qcAutoBuf[j].durMs || 0)) qcAutoBuf[j] = e;
+      return;
+    }
+  }
+  qcAutoBuf.push(e);
+}
+
+function scheduleQCFlush() {
+  if (qcFlushTimer) return;
+  qcFlushTimer = setTimeout(() => { qcFlushTimer = null; flushQC(false); }, 1500);
+}
+
+// merge buffered auto events into qcList, persist, bump the gen so the webview
+// adopts (it picks the new gen up on its next poll, ~40 ms). `closeSpans` also
+// finalises any span still open — only at real stop points (pause / file change
+// / teardown), never on the periodic buffer flush, or an ongoing violation
+// would be split in two.
+function flushQC(closeSpans) {
+  if (qcFlushTimer) { clearTimeout(qcFlushTimer); qcFlushTimer = null; }
+  if (closeSpans) {
+    try {
+      const res = deepqc.flush(qcAnalyzeState);
+      qcAnalyzeState = res.state;
+      for (let i = 0; i < res.events.length; i++) qcBufferEvent(res.events[i]);
+    } catch (e) {}
+  }
+  if (!qcAutoBuf.length) return;
+  if (!qcMedia) qcMedia = qcIdentity();
+  qcList = qcList.concat(qcAutoBuf);
+  qcAutoBuf = [];
+  qcGen++;
+  persistMarkers(serializeMarkers());
+  flushMarkersNow();   // deep-QC flushes are already throttled to ~1.5 s
+}
+
 /* ---------------------------------------------------------------- transport
  *
  * One place that turns a transport verb into an mpv/core call. Used by the
@@ -517,6 +860,7 @@ function collect() {
 
   tickFilter();
   tickScope();
+  tickQC();
 
   const vp = native("video-params") || {};
   const ap = native("audio-params") || {};
@@ -540,6 +884,25 @@ function collect() {
       meterFresh = true; freshGen = fileGen; afMeta = live;
     }
   }
+
+  // deep QC: feed this frame's analysis metadata to the event bridge
+  let qcActive = false;
+  if (qcDeep.on && qcArmedGen === fileGen && qcPresent()) {
+    qcActive = true;
+    const qm = native("vf-metadata/" + QC_LABEL) || {};
+    const ls = deepqc.liveStats(qm);
+    if (ls) qcLiveStats = ls;
+    try {
+      const res = deepqc.analyze(qm, qcAnalyzeState, qcDeep, Math.round((t != null ? t : 0) * 1000));
+      qcAnalyzeState = res.state;
+      if (res.events.length) {
+        for (let i = 0; i < res.events.length; i++) qcBufferEvent(res.events[i]);
+        scheduleQCFlush();
+      }
+    } catch (e) { qcAnalyzeError = String(e); }
+  }
+  let qcSession = 0;
+  for (let i = 0; i < qcList.length; i++) if (qcList[i].source && qcList[i].source !== "manual") qcSession++;
 
   return {
     now: Date.now(),
@@ -663,6 +1026,15 @@ function collect() {
 
     /* video scope filter */
     scope: { cfg: scopeCfg, active: scopePresent(), error: scopeError },
+
+    /* deep QC — automated defect analysis */
+    deepqc: {
+      on: qcDeep.on,
+      active: qcActive,
+      error: qcAnalyzeError,
+      stats: qcLiveStats,
+      session: qcSession,
+    },
   };
 }
 
@@ -707,10 +1079,12 @@ function wireMessages() {
 
   // sent from pagehide — the user closed the window with the red title-bar button
   onWin("iinfo-closing", () => {
+    try { flushQC(true); } catch (e) {}
     flushMarkersNow();
     if (!wantWindow) return;
     wantWindow = false;
     teardownFilter();
+    if (qcPresent()) qcFilterRemove();
     try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
     console.log("IINfo: inspector closed (from window)");
   });
@@ -729,6 +1103,9 @@ function wireMessages() {
     // the webview owns the scope config while it's open
     const sc = cfg && cfg.settings && cfg.settings.scope;
     if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, sc); tickScope(); }
+    // deep QC runs while (and only while) its panel is enabled
+    qcDeep = normalizeDeep(cfg && cfg.settings && cfg.settings.deepqc, !!pnl.deepqc);
+    tickQC();
   });
 
   onWin("iinfo-action", (a) => {
@@ -840,6 +1217,8 @@ function openWindow() {
 function closeWindow() {
   wantWindow = false;
   teardownFilter(); // don't leave the analysis filter running once the window is gone
+  try { flushQC(true); } catch (e) {}
+  if (qcPresent()) qcFilterRemove();
   try { standaloneWindow.close(); } catch (e) {}
   // swap the live page (and its polling) out for a blank one
   try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
@@ -858,6 +1237,9 @@ try {
 } catch (e) { lastConfig = null; }
 if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
   scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, lastConfig.settings.scope);
+}
+if (lastConfig && lastConfig.settings) {
+  qcDeep = normalizeDeep(lastConfig.settings.deepqc, !!(lastConfig.panels && lastConfig.panels.deepqc));
 }
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
@@ -885,6 +1267,11 @@ let lastAudioSig = "";
 function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
 
 on("iina.file-loaded", () => {
+  flushQC(true);                       // persist the old clip's dangling auto events first
+  qcAnalyzeState = deepqc.initState();
+  qcAutoBuf = [];
+  qcLiveStats = null;
+  qcArmedGen = -1;
   fileGen++;
   if (G) gHello();   // path / fps / duration may all have changed
   if (vcOn) gSend("iinfo/compare-cmd", { op: "vcompare", on: false });  // new content — drop the compare overlay
@@ -906,8 +1293,10 @@ on("mpv.video-params.changed", () => {
   lastTechSig = sig;
   gHello();
 });
-on("mpv.end-file", () => { freshGen = -1; });
-on("mpv.shutdown", () => { try { flushMarkersNow(); } catch (e) {} });
+on("mpv.end-file", () => { freshGen = -1; try { flushQC(true); } catch (e) {} });
+// pausing is a natural stop point — finalise any deep-QC span the user paused on
+on("mpv.pause.changed", () => { if (alive && flag("pause")) { try { flushQC(true); } catch (e) {} } });
+on("mpv.shutdown", () => { try { flushQC(true); } catch (e) {} try { flushMarkersNow(); } catch (e) {} });
 
 /* ------------------------------------------------------- A/B compare (global)
  *
@@ -1052,9 +1441,11 @@ if (G) {
 
   let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
   const goodbye = () => {
+    try { flushQC(true); } catch (e) {}
     try { flushMarkersNow(); } catch (e) {}
     vcHideOverlay();
     try { scopeRemove(); } catch (e) {}
+    try { qcFilterRemove(); } catch (e) {}
     alive = false;                       // stop every mpv read from here on
     try { clearInterval(beatTimer); } catch (e) {}
     gSend("iinfo/bye", {});
@@ -1070,6 +1461,7 @@ on("iina.window-will-close", () => {
   // red-title-bar-button case is handled by the `iinfo-closing` message instead.
   if (filterPresent()) tryRemove();
   afActive = false; armedGen = -1;
+  if (qcPresent()) qcFilterRemove();
   console.log("IINfo: window-will-close (wantWindow left " + wantWindow + ")");
 });
 

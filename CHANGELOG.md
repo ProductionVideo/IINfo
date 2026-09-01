@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.0
+
+**Deep QC — automated defect detection on the timeline.**
+
+New **Deep QC** panel. While it's open, IINfo runs FFmpeg's own analysis filters
+over the video and turns what they find into QC markers:
+
+- **Freeze / held frames** (`freezedetect`) · **black frames** · **broadcast-range
+  violations** (BRNG) · **temporal outliers** (TOUT, noise / dropout) · **vertical
+  line repetition** (VREP) — via `signalstats` + a luma-black test.
+- Detected issues land on the **QC Markers** list and the scrub bar as hollow
+  ticks; filter the list to **Automatic**, walk them, resolve them, export them
+  with the manual markers. **Clear automatic events** removes them in one click.
+- Per-detector toggles + thresholds (Freeze ≥ 1–8 s, Black ≥ 0.2–1 s, Broadcast
+  range Limited / Full / Off). Live readout of Y range + BRNG + TOUT.
+- **Deliberate mode:** the analysis filter is only installed while the panel is
+  enabled — it analyses every decoded frame and costs real hardware-decode
+  performance. Run it as a pass, then switch the panel off. No new permission.
+
+Internals: a labelled analysis-only `@iinfoqc` vf filter with the same
+poll-driven, self-healing lifecycle as the audio filter and video scopes; a pure,
+tested metadata→event bridge (`lib/deepqc.js`, inlined into `main.js` +
+drift-guarded) with span coalescing; `test/deepqc.test.js` +
+`test/deepqc-inline.test.js`.
+
 ## 0.6.0
 
 **Video Scopes — a live waveform / parade / vectorscope / histogram on the picture.**

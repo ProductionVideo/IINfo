@@ -2,8 +2,8 @@
 
 A real-time video-QC toolkit that lives inside [IINA](https://iina.io). A
 floating, theme-able inspector window reports exactly what the player is decoding
-and rendering *right now*, frame by frame — plus A/B version comparison, QC issue
-marking, and live signal scopes.
+and rendering *right now*, frame by frame — plus A/B version comparison, manual
+and automated QC issue marking, and live signal scopes.
 
 <p align="center">
   <img src="docs/hero.png" alt="IINfo inspector window" width="440"><br>
@@ -30,6 +30,7 @@ your layout persists.
 | **A/B Compare** | Line two open windows up as A / B — offset, link transport, step together frame-accurately |
 | **A/B Technical Diff** | A and B's codec / resolution / fps / pixel format / bit depth / colour / audio params side by side, every difference flagged |
 | **QC Markers** | Mark issues at the exact frame, tag and navigate them, see them on the scrub bar, export |
+| **Deep QC** | Automated defect detection — freeze / black / broadcast-range / noise / line-repeat — fed onto the QC Markers timeline (see below) |
 | **Audio Waveform** | Live scrolling min–max + RMS curves, per channel or summed. Themed accent; red only where a sample clips |
 | **Audio Levels** | Per-channel meters — RMS on a theme-accent gradient that turns amber/red only near clip, plus peak and peak-hold ticks |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, LRA, True Peak, target reference, momentary sparkline |
@@ -61,6 +62,23 @@ with Prev / Next, and they show as ticks on the scrub bar — click to seek.
 Markers persist per media (in the plugin data folder, or a `<media>.iinfo.json`
 sidecar if you turn that on in Tools ▸ Storage) and export from **Tools ▸
 Actions** as a report / CSV / full-schema JSON.
+
+## Deep QC
+
+**Tools ▸ Panels ▸ Deep QC.** While the panel is open, IINfo runs FFmpeg's own
+analysis filters over the video and turns what they find into QC markers:
+
+- **Freeze / held frames**, **black frames**, **broadcast-range violations**
+  (BRNG), **temporal outliers** (noise / dropout, TOUT), **vertical line
+  repetition** (VREP).
+- Detected issues appear on the **QC Markers** list and the scrub bar as hollow
+  ticks — filter the list to **Automatic**, walk them, resolve them, and export
+  them alongside the manual markers. **Clear automatic events** wipes them.
+- Per-detector toggles and thresholds; a live readout of the luma range, BRNG
+  and TOUT.
+- It analyses every decoded frame, so it forces software paths and costs
+  hardware-decode performance — run it as a **dedicated pass**, then switch the
+  panel off. No new permission.
 
 ## Video scopes
 
@@ -121,16 +139,18 @@ payload of mpv properties. `ui/inspector.{html,css,js}` is a self-contained web
 view (no build step) — panels are built once and updated in place,
 `requestAnimationFrame` drives the meters and canvases.
 
-Audio metering and video scopes are each a labelled lavfi filter (`@iinfo`,
-`@iinfoscope`) whose entire lifecycle runs from the poll handler — installed,
-torn down and reinstalled per clip, retried if it was added too early — so a
-close→open or track switch always recovers on the next poll.
+Audio metering, video scopes and Deep QC are each a labelled lavfi filter
+(`@iinfo`, `@iinfoscope`, `@iinfoqc`) whose entire lifecycle runs from the poll
+handler — installed, torn down and reinstalled per clip, retried if it was added
+too early — so a close→open or track switch always recovers on the next poll.
+Deep QC's `@iinfoqc` is analysis-only (the picture passes through untouched); a
+pure, tested bridge (`lib/deepqc.js`) turns its frame metadata into QC events.
 
 A/B Compare adds a **global entry** (`global.js`, one per IINA process): it tracks
 every open player window, owns the compare state and the frame maths
-(`lib/sync.js`), and relays ganged transport. QC markers ride a generic event
-model (`ui/events.js`) so automated QC events can later share the same timeline
-and export.
+(`lib/sync.js`), and relays ganged transport. Manual and automated (Deep QC)
+markers ride one generic event model (`ui/events.js`), sharing the same timeline,
+filter and export.
 
 Settings persist via `iina.preferences`. Permissions used: `show-osd`,
 `file-system` (marker sidecars / exports), `video-overlay` (visual compare).
@@ -140,8 +160,9 @@ Settings persist via `iina.preferences`. Permissions used: `show-osd`,
 - Meters / audio waveform update only while audio is playing.
 - Ganged A/B playback is best-effort; frame accuracy is in the paused / stepped
   state. Both windows must be in the same IINA process.
-- Video scopes and Visual Compare are CPU filters / screenshot-based — they can
-  cost hardware-decode performance.
+- Video scopes, Deep QC and Visual Compare are CPU filters / screenshot-based —
+  they can cost hardware-decode performance. Deep QC also samples `signalstats`
+  at the poll rate, so very brief transient defects between polls can be missed.
 - Timecode uses `container-fps`, falling back to an estimate; drop-frame is
   assumed for the 29.97 / 59.94 family only.
 - `video-frame-info` fields vary by mpv build.

@@ -6,6 +6,47 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Deep QC (v0.7.0)
+
+### Analysis-only lavfi filter, same lifecycle as everything else
+
+`@iinfoqc:lavfi=[signalstats=stat=tout+vrep+brng, freezedetect=d=…]` — the
+picture passes through untouched; each sub-filter attaches `lavfi.*` frame
+metadata. `tickQC()` mirrors `tickScope()` / `tickFilter()` (reconcile the graph
+string against config + `fileGen`, remove-now/add-next-tick, self-heal). Gated on
+`wantWindow && panel.deepqc` — analysis needs the ~30 Hz poll to read metadata,
+and it's a real performance cost, so it only runs while its panel is open
+("deliberate mode"). No new permission — `vf add`/`remove` is labelled, the
+user's own chain is untouched.
+
+### The metadata→event bridge is pure, tested, and inlined
+
+`lib/deepqc.js` — `analyze(meta, state, opts, posMs) -> {events, state}`. No DOM,
+no `iina`, no I/O; `state` is plain-serialisable; `analyze` never mutates its
+input. `main.js` inlines it verbatim (IINA's `require()` can't be trusted to
+return `module.exports` — same call as `lib/sync.js` in `global.js`);
+`test/deepqc-inline.test.js` drift-guards the copy against `test/deepqc.test.js`.
+`main.js` finalises the partial events (id / ts / frame / tc), buffers them, and
+every ~1.5 s merges the batch into `qcList` (dedup key
+`source|type|round(tMs/500)`) → bumps `qcGen` → persists → the webview adopts on
+its next poll. Deep-QC events are ordinary QC events (`ui/events.js`) with
+`source ∈ {video, signalstats, freezedetect}` and `meta.auto = true`, so the
+timeline, list filter and export were already done.
+
+### signalstats is sampled; freeze/black are span- or dedup-based
+
+`signalstats` emits fresh BRNG/TOUT/VREP/YMAX every frame, so the poll samples
+them and coalesces per-metric **spans** (open on the first dirty sample, close
+after a clean gap > 1 s, drop spans < 300 ms, merge spans < 1 s apart). Spans are
+finalised (`deepqc.flush`) only at real stop points — pause / file change /
+teardown — never on the periodic buffer flush, or one ongoing violation would
+split. **Black** is derived from a sustained low `YMAX` (depth-aware ceiling)
+rather than `blackdetect`, because a per-frame signalstats value can't be missed
+by the poll the way `blackdetect`'s sparse `black_start` can. **Freeze** still
+needs `freezedetect`; mpv keeps the last metadata dict, so `freeze_start` is
+re-read across polls and deduped on its value, with a corrected duration emitted
+once `freeze_end` lands.
+
 ## Video Scopes (v0.6.0)
 
 ### mpv renders the scope, on the video — same lifecycle as the audio filter

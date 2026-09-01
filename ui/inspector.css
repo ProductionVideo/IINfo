@@ -219,6 +219,11 @@ body {
 .scrub-mark.sev-info { background: var(--accent); }
 .scrub-mark.sev-warning { background: var(--warn); }
 .scrub-mark.sev-error { background: var(--bad); }
+/* automatic (analyser) markers: hollow, hung from the bar so they read apart from manual ones */
+.scrub-mark.auto { background: var(--panel); border-width: 1.5px; height: 9px; top: 5px; }
+.scrub-mark.auto.sev-info { border-color: var(--accent); }
+.scrub-mark.auto.sev-warning { border-color: var(--warn); }
+.scrub-mark.auto.sev-error { border-color: var(--bad); }
 .scrub-mark:hover { height: 16px; }
 .scrub-mark.sel { height: 18px; width: 4px; box-shadow: 0 0 0 1px var(--text); }
 .scrub-mark.cluster {
@@ -396,6 +401,12 @@ body.ganged .jump input { border-color: var(--accent); }
 .scope-row .btn.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .scope-row input[type="range"] { flex: 1; accent-color: var(--accent); }
 .scope-row .scope-lbl.mono { min-width: 40px; text-align: right; }
+
+/* ================= Deep QC panel ================= */
+.deepqc-checks { display: flex; flex-direction: column; gap: 5px; margin-bottom: 9px; }
+.deepqc-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); cursor: pointer; }
+.deepqc-check input { accent-color: var(--accent); }
+.deepqc-read { color: var(--faint); font-size: 11px; padding: 7px 0 3px; font-family: var(--mono); }
 
 /* ================= QC markers panel ================= */
 .qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }

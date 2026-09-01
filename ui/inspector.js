@@ -763,7 +763,7 @@
     var bNext = el("button", "btn xs", "Next ▶");
     bNext.addEventListener("click", function () { navMarker(1); });
     var filterSel = el("select", "cmp-sel qc-filter");
-    ["All", "Unresolved", "Manual", "Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"]
+    ["All", "Unresolved", "Manual", "Automatic", "Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"]
       .forEach(function (o) { var op = el("option", null, o); op.value = o; filterSel.appendChild(op); });
     filterSel.addEventListener("change", function () {
       state.markerFilter = filterSel.value;
@@ -832,15 +832,19 @@
       mainSpan.addEventListener("click", function () { selectMarker(ev.id); act("seek-abs", ev.tMs / 1000); });
       r.appendChild(mainSpan);
       var tools = el("span", "qc-tools");
-      var bE = el("button", "mini", "edit");
-      bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
+      var auto = ev.source !== "manual";
+      if (!auto) {
+        var bE = el("button", "mini", "edit");
+        bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
+        tools.appendChild(bE);
+      }
       var bR = el("button", "mini", ev.resolved ? "reopen" : "resolve");
       bR.addEventListener("click", function (e) { e.stopPropagation(); mutateMarker(ev.id, function (x) { return QCE.withResolved(x, !x.resolved); }); });
       var bX = el("button", "mini", "✕");
       bX.addEventListener("click", function (e) { e.stopPropagation(); removeMarker(ev.id); });
-      tools.appendChild(bE); tools.appendChild(bR); tools.appendChild(bX);
+      tools.appendChild(bR); tools.appendChild(bX);
       r.appendChild(tools);
-      if (editingId === ev.id) r.appendChild(editor(ev));
+      if (editingId === ev.id && !auto) r.appendChild(editor(ev));
       return r;
     }
     function render() {
@@ -1063,10 +1067,117 @@
     };
   })();
 
+  // -- Deep QC — automated defect detection --------------------------------
+  P.deepqc = (function () {
+    var p = el("div", "panel");
+    var h = el("h2");
+    h.appendChild(el("span", null, "Deep QC"));
+    var badge = el("span", "tag");
+    h.appendChild(badge);
+    p.appendChild(h);
+    var body = el("div", "body");
+
+    var DQ_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 };
+    function dq() {
+      if (!state.settings.deepqc) state.settings.deepqc = Object.assign({}, DQ_DEFAULT);
+      return state.settings.deepqc;
+    }
+    function set(patch) { state.settings.deepqc = Object.assign({}, dq(), patch); pushConfig(); render(); }
+
+    var checks = el("div", "deepqc-checks");
+    var checkBoxes = {};
+    [["freeze", "Freeze / held frames"], ["black", "Black frames"], ["outliers", "Temporal outliers + line repeats"]]
+      .forEach(function (o) {
+        var lab = el("label", "deepqc-check");
+        var cb = el("input"); cb.type = "checkbox";
+        cb.addEventListener("change", function () { var q = {}; q[o[0]] = cb.checked; set(q); });
+        lab.appendChild(cb); lab.appendChild(el("span", null, o[1]));
+        checkBoxes[o[0]] = cb; checks.appendChild(lab);
+      });
+    body.appendChild(checks);
+
+    var opts = el("div", "scope-opts");
+    function segRow(label, pairs, key) {
+      var row = el("div", "scope-row");
+      row.appendChild(el("span", "scope-lbl", label));
+      var btns = {};
+      pairs.forEach(function (o) {
+        var b = el("button", "btn xs", o[1]);
+        b.addEventListener("click", function () { var q = {}; q[key] = o[0]; set(q); });
+        btns[o[0]] = b; row.appendChild(b);
+      });
+      opts.appendChild(row);
+      return { row: row, btns: btns };
+    }
+    var rangeSeg = segRow("Broadcast range", [["limited", "Limited"], ["full", "Full"], ["off", "Off"]], "range");
+    var freezeSeg = segRow("Freeze ≥", [[1, "1s"], [2, "2s"], [4, "4s"], [8, "8s"]], "freezeDur");
+    var blackSeg = segRow("Black ≥", [[0.2, "0.2s"], [0.5, "0.5s"], [1, "1s"]], "blackDur");
+    body.appendChild(opts);
+
+    var readout = el("div", "deepqc-read", "—");
+    body.appendChild(readout);
+
+    var actions = el("div", "qc-bar");
+    var bClear = el("button", "btn xs", "Clear automatic events");
+    bClear.addEventListener("click", function () {
+      state.markers.list = state.markers.list.filter(function (e) { return e.source === "manual"; });
+      if (typeof pushMarkers === "function") pushMarkers(true);
+      if (typeof mkRefresh === "function") mkRefresh();
+      render();
+    });
+    actions.appendChild(bClear);
+    body.appendChild(actions);
+
+    var NOTE = "Analyses every decoded frame with FFmpeg's own filters — expect reduced hardware-decode performance and some dropped frames. Run it as a dedicated pass, then switch the panel off.";
+    var note = el("div", "hint", NOTE);
+    note.style.textAlign = "left";
+    body.appendChild(note);
+    p.appendChild(body);
+
+    function fmtY(v) { return v == null ? "–" : String(Math.round(v)); }
+    function render() {
+      var c = dq();
+      Object.keys(checkBoxes).forEach(function (k) { checkBoxes[k].checked = c[k] !== false; });
+      Object.keys(rangeSeg.btns).forEach(function (k) { rangeSeg.btns[k].classList.toggle("on", k === (c.range || "limited")); });
+      Object.keys(freezeSeg.btns).forEach(function (k) { freezeSeg.btns[k].classList.toggle("on", Number(k) === (c.freezeDur || 2)); });
+      Object.keys(blackSeg.btns).forEach(function (k) { blackSeg.btns[k].classList.toggle("on", Number(k) === (c.blackDur || 0.5)); });
+      freezeSeg.row.hidden = c.freeze === false;
+      var autoN = 0;
+      for (var i = 0; i < state.markers.list.length; i++) if (state.markers.list[i].source !== "manual") autoN++;
+      bClear.disabled = autoN === 0;
+    }
+
+    return {
+      key: "deepqc", title: "Deep QC", def: false, el: p, _render: render,
+      update: function (d) {
+        render();
+        var q = d.deepqc || {};
+        if (q.error) {
+          badge.textContent = "filter error"; badge.className = "tag diff";
+          note.textContent = "Analysis filter failed: " + q.error; note.className = "hint bad";
+        } else {
+          note.textContent = NOTE; note.className = "hint";
+          badge.textContent = q.session ? (q.session + " found") : (q.active ? "analysing…" : "starting…");
+          badge.className = "tag" + (q.active ? " ok" : "");
+        }
+        var s = q.stats;
+        if (s) {
+          var bits = ["Y " + fmtY(s.yMin) + "–" + fmtY(s.yMax)];
+          if (s.yAvg != null) bits.push("avg " + fmtY(s.yAvg));
+          if (s.brng != null) bits.push("BRNG " + (s.brng * 100).toFixed(1) + "%");
+          if (s.tout != null) bits.push("TOUT " + s.tout.toFixed(3));
+          readout.textContent = bits.join("  ·  ");
+        } else {
+          readout.textContent = q.active ? "waiting for frames…" : "—";
+        }
+      },
+    };
+  })();
+
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "deepqc", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -1098,7 +1209,7 @@
     panels: {}, panelOrder: ORDER.slice(), data: null, gen: null, win: null, compare: null,
     markers: { list: [], media: null, gen: -1, sidecar: false, sidecarError: false },
     markerFilter: "All", markerSel: null,
-    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 } },
+    settings: { theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15", markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false, experimental: false, scope: { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, deepqc: { freeze: true, black: true, outliers: true, range: "limited", freezeDur: 2, blackDur: 0.5 } },
   };
   ORDER.forEach(function (kk) { state.panels[kk] = P[kk].def; });
 
@@ -1130,6 +1241,7 @@
     if (!f || f === "All") return null;
     if (f === "Unresolved") return { resolved: false };
     if (f === "Manual") return { source: "manual" };
+    if (f === "Automatic") return { auto: true };
     return { category: f };
   }
   function pushMarkers(now) {
@@ -1245,7 +1357,8 @@
       var lead = g.items[0];
       var worst = g.items.reduce(function (s, e) { return sevRank(e.severity) > sevRank(s) ? e.severity : s; }, "info");
       var selHere = g.items.some(function (e) { return e.id === state.markerSel; });
-      var m = el("span", "scrub-mark sev-" + worst + (g.items.length > 1 ? " cluster" : "") + (selHere ? " sel" : ""));
+      var allAuto = g.items.every(function (e) { return e.source !== "manual"; });
+      var m = el("span", "scrub-mark sev-" + worst + (allAuto ? " auto" : "") + (g.items.length > 1 ? " cluster" : "") + (selHere ? " sel" : ""));
       m.style.left = g.pct + "%";
       if (g.items.length > 1) m.textContent = String(g.items.length);
       m.title = g.items.map(function (e) {
@@ -1450,6 +1563,13 @@
         ["type", "layout", "size", "corner", "bright", "opacity"].forEach(function (k) {
           if (cfg.settings.scope[k] != null) state.settings.scope[k] = cfg.settings.scope[k];
         });
+      }
+      if (cfg.settings.deepqc && typeof cfg.settings.deepqc === "object") {
+        var dqs = cfg.settings.deepqc, dqt = state.settings.deepqc;
+        ["freeze", "black", "outliers"].forEach(function (k) { if (typeof dqs[k] === "boolean") dqt[k] = dqs[k]; });
+        if (dqs.range === "limited" || dqs.range === "full" || dqs.range === "off") dqt.range = dqs.range;
+        if (typeof dqs.freezeDur === "number") dqt.freezeDur = dqs.freezeDur;
+        if (typeof dqs.blackDur === "number") dqt.blackDur = dqs.blackDur;
       }
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }

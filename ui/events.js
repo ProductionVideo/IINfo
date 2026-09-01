@@ -107,6 +107,7 @@
   function matches(ev, q) {
     if (!q) return true;
     if (q.source != null && ev.source !== q.source) return false;
+    if (q.auto != null && (ev.source !== "manual") !== !!q.auto) return false;
     if (q.category != null && ev.category !== q.category) return false;
     if (q.severity != null && ev.severity !== q.severity) return false;
     if (q.resolved != null && !!ev.resolved !== !!q.resolved) return false;
