@@ -30,7 +30,7 @@ your layout persists.
 | **A/B Compare** | Line two open windows up as A / B — offset, link transport, step together frame-accurately |
 | **A/B Technical Diff** | A and B's codec / resolution / fps / pixel format / bit depth / colour / audio params side by side, every difference flagged |
 | **QC Markers** | Mark issues at the exact frame, tag and navigate them, see them on the scrub bar, export |
-| **Deep QC** | Automated defect detection — freeze / black / broadcast-range / noise / line-repeat — fed onto the QC Markers timeline (see below) |
+| **Deep QC** | User-started automated defect detection — freeze / black / broadcast-range / noise / line-repeat — fed onto the QC Markers timeline (see below) |
 | **Audio Waveform** | Live scrolling min–max + RMS curves, per channel or summed. Themed accent; red only where a sample clips |
 | **Audio Levels** | Per-channel meters — RMS on a theme-accent gradient that turns amber/red only near clip, plus peak and peak-hold ticks |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, LRA, True Peak, target reference, momentary sparkline |
@@ -65,8 +65,9 @@ Actions** as a report / CSV / full-schema JSON.
 
 ## Deep QC
 
-**Tools ▸ Panels ▸ Deep QC.** While the panel is open, IINfo runs FFmpeg's own
-analysis filters over the video and turns what they find into QC markers:
+**Tools ▸ Panels ▸ Deep QC**, then **▶ Start analysis**. IINfo runs FFmpeg's own
+analysis filters over the video for as long as you leave it running, turning
+what they find into QC markers:
 
 - **Freeze / held frames**, **black frames**, **broadcast-range violations**
   (BRNG), **temporal outliers** (noise / dropout, TOUT), **vertical line
@@ -76,9 +77,12 @@ analysis filters over the video and turns what they find into QC markers:
   them alongside the manual markers. **Clear automatic events** wipes them.
 - Per-detector toggles and thresholds; a live readout of the luma range, BRNG
   and TOUT.
-- It analyses every decoded frame, so it forces software paths and costs
-  hardware-decode performance — run it as a **dedicated pass**, then switch the
-  panel off. No new permission.
+- **It's a deliberate pass, not a background feature.** Analysis never starts on
+  its own — opening the panel, opening a file, or relaunching IINA never arms
+  it. It analyses every decoded frame, which forces software paths and costs
+  hardware-decode performance, so you start it explicitly, play through the
+  section you want checked, then **■ Stop** (or let it stop itself at end of
+  file / on close). No new permission.
 
 ## Video scopes
 

@@ -1084,6 +1084,22 @@
     }
     function set(patch) { state.settings.deepqc = Object.assign({}, dq(), patch); pushConfig(); render(); }
 
+    // analysis is a deliberate, user-started pass — never armed just because this
+    // panel is open, and never resumed on its own after a file change or restart
+    var running = false;
+    var runRow = el("div", "qc-bar");
+    var runBtn = el("button", "btn xs deepqc-run", "▶ Start analysis");
+    runBtn.addEventListener("click", function () {
+      try { iina.postMessage("iinfo-deepqc", { op: running ? "stop" : "start" }); } catch (e) {}
+    });
+    runRow.appendChild(runBtn);
+    body.appendChild(runRow);
+
+    var PERF_NOTE = "Analyses every decoded frame with FFmpeg's own filters — expect reduced hardware-decode performance and dropped frames while it runs. Play through the section you want checked, then Stop.";
+    var perfNote = el("div", "hint", PERF_NOTE);
+    perfNote.style.textAlign = "left";
+    body.appendChild(perfNote);
+
     var checks = el("div", "deepqc-checks");
     var checkBoxes = {};
     [["freeze", "Freeze / held frames"], ["black", "Black frames"], ["outliers", "Temporal outliers + line repeats"]]
@@ -1128,9 +1144,9 @@
     actions.appendChild(bClear);
     body.appendChild(actions);
 
-    var NOTE = "Analyses every decoded frame with FFmpeg's own filters — expect reduced hardware-decode performance and some dropped frames. Run it as a dedicated pass, then switch the panel off.";
-    var note = el("div", "hint", NOTE);
+    var note = el("div", "hint bad");
     note.style.textAlign = "left";
+    note.hidden = true;
     body.appendChild(note);
     p.appendChild(body);
 
@@ -1152,13 +1168,16 @@
       update: function (d) {
         render();
         var q = d.deepqc || {};
+        running = !!q.running;
+        runBtn.textContent = running ? "■ Stop analysis" : "▶ Start analysis";
+        runBtn.classList.toggle("on", running);
         if (q.error) {
           badge.textContent = "filter error"; badge.className = "tag diff";
-          note.textContent = "Analysis filter failed: " + q.error; note.className = "hint bad";
+          note.textContent = "Analysis filter failed: " + q.error; note.hidden = false;
         } else {
-          note.textContent = NOTE; note.className = "hint";
-          badge.textContent = q.session ? (q.session + " found") : (q.active ? "analysing…" : "starting…");
-          badge.className = "tag" + (q.active ? " ok" : "");
+          note.hidden = true;
+          badge.textContent = q.session ? (q.session + " found") : (running ? (q.active ? "analysing…" : "starting…") : "idle");
+          badge.className = "tag" + (running && q.active ? " ok" : "");
         }
         var s = q.stats;
         if (s) {
@@ -1168,7 +1187,7 @@
           if (s.tout != null) bits.push("TOUT " + s.tout.toFixed(3));
           readout.textContent = bits.join("  ·  ");
         } else {
-          readout.textContent = q.active ? "waiting for frames…" : "—";
+          readout.textContent = running ? "waiting for frames…" : "not running";
         }
       },
     };

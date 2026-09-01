@@ -407,6 +407,8 @@ body.ganged .jump input { border-color: var(--accent); }
 .deepqc-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); cursor: pointer; }
 .deepqc-check input { accent-color: var(--accent); }
 .deepqc-read { color: var(--faint); font-size: 11px; padding: 7px 0 3px; font-family: var(--mono); }
+.deepqc-run { font-weight: 600; }
+.deepqc-run.on { background: var(--bad); color: #fff; border-color: var(--bad); }
 
 /* ================= QC markers panel ================= */
 .qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }

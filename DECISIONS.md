@@ -8,16 +8,29 @@ FFmpeg/mpv filter use. Newest first.
 
 ## Deep QC (v0.7.0)
 
-### Analysis-only lavfi filter, same lifecycle as everything else
+### Analysis-only lavfi filter, armed only by an explicit start — never by config
 
 `@iinfoqc:lavfi=[signalstats=stat=tout+vrep+brng, freezedetect=d=…]` — the
 picture passes through untouched; each sub-filter attaches `lavfi.*` frame
 metadata. `tickQC()` mirrors `tickScope()` / `tickFilter()` (reconcile the graph
 string against config + `fileGen`, remove-now/add-next-tick, self-heal). Gated on
-`wantWindow && panel.deepqc` — analysis needs the ~30 Hz poll to read metadata,
-and it's a real performance cost, so it only runs while its panel is open
-("deliberate mode"). No new permission — `vf add`/`remove` is labelled, the
-user's own chain is untouched.
+`wantWindow && qcRunning`.
+
+`signalstats=stat=tout+vrep+brng` is expensive — real per-pixel work every
+frame that forces the frame through system memory, defeating hardware-decode
+passthrough on large files. The first cut gated the filter on the panel being
+*open* (`panels.deepqc`), matching the audio-meter panels. That's wrong for a
+filter this heavy: a panel checkbox is sticky config, so it silently re-armed
+the analysis on *every* file opened afterwards, including ones the user had no
+intent of QC'ing — reported live as "poor performance out the box" opening
+large files. Deep QC is now a **deliberate, user-started pass**: `qcRunning` is
+a plain runtime flag, set `true` only by the panel's ▶ Start analysis button
+(`iinfo-deepqc {op:"start"}`) and never derived from panel visibility, never
+restored from persisted config (`normalizeDeep()` only carries detector
+settings — thresholds/toggles — which are inert at rest). It stops itself
+(`stopQC()`) on file change, end of file, panel/window close, or ■ Stop; a
+relaunch always starts idle. No new permission — `vf add`/`remove` is labelled,
+the user's own chain is untouched.
 
 ### The metadata→event bridge is pure, tested, and inlined
 

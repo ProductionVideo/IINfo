@@ -520,9 +520,15 @@ var deepqc = (function () {
 /* ---- end inlined lib/deepqc.js ---- */
 
 const QC_LABEL = "iinfoqc";
-const QC_DEEP_DEFAULT = { on: false, freeze: true, black: true, outliers: true, range: "limited",
+const QC_DEEP_DEFAULT = { freeze: true, black: true, outliers: true, range: "limited",
                           brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
-let qcDeep = Object.assign({}, QC_DEEP_DEFAULT);
+let qcDeep = Object.assign({}, QC_DEEP_DEFAULT);   // detector settings — persisted, harmless at rest
+let qcPanelOn = false;         // is the Deep QC panel visible in the webview right now
+// qcRunning is a deliberate, user-started analysis pass. It is NEVER derived from
+// panel visibility or restored from persisted config — opening the panel, loading
+// a file, or relaunching IINA must never silently arm a filter that forces
+// software decode. Only iinfo-deepqc {op:"start"} sets it.
+let qcRunning = false;
 let qcAnalyzeState = deepqc.initState();
 let qcArmedSig = null;        // the graph string the running @iinfoqc was built for
 let qcArmedGen = -1;
@@ -531,11 +537,10 @@ let qcAutoBuf = [];           // finalised auto events not yet merged into qcLis
 let qcFlushTimer = null;
 let qcLiveStats = null;       // last signalstats readout for the panel
 
-function normalizeDeep(s, panelOn) {
+function normalizeDeep(s) {
   s = s || {};
   const num1 = (v, d) => (typeof v === "number" && isFinite(v) ? v : d);
   return {
-    on: !!panelOn,
     freeze: s.freeze !== false,
     black: s.black !== false,
     outliers: s.outliers !== false,
@@ -548,9 +553,9 @@ function normalizeDeep(s, panelOn) {
   };
 }
 
-// pure: build the `vf add` argument for the analysis filter, or null when off
+// pure: build the `vf add` argument for the analysis filter, or null when nothing's enabled
 function qcAnalyzeGraph(cfg) {
-  if (!cfg || !cfg.on) return null;
+  if (!cfg) return null;
   const parts = [];
   if (cfg.outliers || cfg.range !== "off" || cfg.black) parts.push("signalstats=stat=tout+vrep+brng");
   if (cfg.freeze) {
@@ -573,10 +578,10 @@ function qcFilterRemove() {
 }
 function tickQC() {
   if (!alive) return;
-  const want = wantWindow && qcDeep.on;
+  const want = wantWindow && qcRunning;
   const sig = want ? qcAnalyzeGraph(qcDeep) : null;
   if (!sig) {
-    if (qcPresent()) { qcFilterRemove(); flushQC(true); }
+    if (qcPresent()) qcFilterRemove();
     return;
   }
   const present = qcPresent();
@@ -590,6 +595,19 @@ function tickQC() {
     qcAnalyzeError = String(e); qcArmedSig = null;
     console.log("IINfo: deep-QC `vf add` — " + e);
   }
+}
+// start/stop the whole pass — the only way qcRunning ever changes
+function startQC() {
+  if (!alive || qcRunning) return;
+  qcRunning = true;
+  qcAnalyzeState = deepqc.initState();
+  tickQC();
+}
+function stopQC() {
+  if (!qcRunning && !qcPresent()) return;
+  qcRunning = false;
+  flushQC(true);
+  if (qcPresent()) qcFilterRemove();
 }
 
 function qcDedupKey(e) { return e.source + "|" + e.type + "|" + Math.round(e.tMs / 500); }
@@ -887,7 +905,7 @@ function collect() {
 
   // deep QC: feed this frame's analysis metadata to the event bridge
   let qcActive = false;
-  if (qcDeep.on && qcArmedGen === fileGen && qcPresent()) {
+  if (qcRunning && qcArmedGen === fileGen && qcPresent()) {
     qcActive = true;
     const qm = native("vf-metadata/" + QC_LABEL) || {};
     const ls = deepqc.liveStats(qm);
@@ -1027,9 +1045,9 @@ function collect() {
     /* video scope filter */
     scope: { cfg: scopeCfg, active: scopePresent(), error: scopeError },
 
-    /* deep QC — automated defect analysis */
+    /* deep QC — automated defect analysis (user-started; see qcRunning) */
     deepqc: {
-      on: qcDeep.on,
+      running: qcRunning,
       active: qcActive,
       error: qcAnalyzeError,
       stats: qcLiveStats,
@@ -1079,12 +1097,11 @@ function wireMessages() {
 
   // sent from pagehide — the user closed the window with the red title-bar button
   onWin("iinfo-closing", () => {
-    try { flushQC(true); } catch (e) {}
+    stopQC();
     flushMarkersNow();
     if (!wantWindow) return;
     wantWindow = false;
     teardownFilter();
-    if (qcPresent()) qcFilterRemove();
     try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
     console.log("IINfo: inspector closed (from window)");
   });
@@ -1103,9 +1120,20 @@ function wireMessages() {
     // the webview owns the scope config while it's open
     const sc = cfg && cfg.settings && cfg.settings.scope;
     if (sc && typeof sc === "object") { scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, sc); tickScope(); }
-    // deep QC runs while (and only while) its panel is enabled
-    qcDeep = normalizeDeep(cfg && cfg.settings && cfg.settings.deepqc, !!pnl.deepqc);
-    tickQC();
+    // Deep QC detector settings persist; whether it's actually running does not —
+    // hiding the panel stops an in-progress pass (nothing to see it by anyway)
+    qcDeep = normalizeDeep(cfg && cfg.settings && cfg.settings.deepqc);
+    qcPanelOn = !!pnl.deepqc;
+    if (!qcPanelOn) stopQC(); else tickQC();
+  });
+
+  // Deep QC is a deliberate, user-started pass — this is the only path that can
+  // set qcRunning. See the note above its declaration.
+  onWin("iinfo-deepqc", (m) => {
+    if (!m || !m.op) return;
+    if (m.op === "start") startQC();
+    else if (m.op === "stop") stopQC();
+    if (wantWindow) { try { standaloneWindow.postMessage("iinfo-data", collect()); } catch (e) {} }
   });
 
   onWin("iinfo-action", (a) => {
@@ -1217,8 +1245,7 @@ function openWindow() {
 function closeWindow() {
   wantWindow = false;
   teardownFilter(); // don't leave the analysis filter running once the window is gone
-  try { flushQC(true); } catch (e) {}
-  if (qcPresent()) qcFilterRemove();
+  stopQC();
   try { standaloneWindow.close(); } catch (e) {}
   // swap the live page (and its polling) out for a blank one
   try { standaloneWindow.loadFile("ui/blank.html"); webviewLoaded = false; } catch (e) {}
@@ -1239,7 +1266,7 @@ if (lastConfig && lastConfig.settings && lastConfig.settings.scope) {
   scopeCfg = Object.assign({ type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 }, lastConfig.settings.scope);
 }
 if (lastConfig && lastConfig.settings) {
-  qcDeep = normalizeDeep(lastConfig.settings.deepqc, !!(lastConfig.panels && lastConfig.panels.deepqc));
+  qcDeep = normalizeDeep(lastConfig.settings.deepqc);   // detector settings only — never auto-runs
 }
 
 // every callback we hand to IINA (menu items, events, window messages) is pinned
@@ -1267,11 +1294,10 @@ let lastAudioSig = "";
 function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log("IINfo: event.on(" + ev + ") failed — " + e); } }
 
 on("iina.file-loaded", () => {
-  flushQC(true);                       // persist the old clip's dangling auto events first
+  stopQC();                            // a new clip needs an explicit, deliberate restart
   qcAnalyzeState = deepqc.initState();
   qcAutoBuf = [];
   qcLiveStats = null;
-  qcArmedGen = -1;
   fileGen++;
   if (G) gHello();   // path / fps / duration may all have changed
   if (vcOn) gSend("iinfo/compare-cmd", { op: "vcompare", on: false });  // new content — drop the compare overlay
@@ -1293,10 +1319,12 @@ on("mpv.video-params.changed", () => {
   lastTechSig = sig;
   gHello();
 });
-on("mpv.end-file", () => { freshGen = -1; try { flushQC(true); } catch (e) {} });
+// reaching the end of the file finishes a deep-QC pass on its own
+on("mpv.end-file", () => { freshGen = -1; try { stopQC(); } catch (e) {} });
 // pausing is a natural stop point — finalise any deep-QC span the user paused on
-on("mpv.pause.changed", () => { if (alive && flag("pause")) { try { flushQC(true); } catch (e) {} } });
-on("mpv.shutdown", () => { try { flushQC(true); } catch (e) {} try { flushMarkersNow(); } catch (e) {} });
+// (a pass in progress keeps running; only end-of-file / explicit Stop end it)
+on("mpv.pause.changed", () => { if (alive && qcRunning && flag("pause")) { try { flushQC(true); } catch (e) {} } });
+on("mpv.shutdown", () => { try { stopQC(); } catch (e) {} try { flushMarkersNow(); } catch (e) {} });
 
 /* ------------------------------------------------------- A/B compare (global)
  *
@@ -1441,11 +1469,10 @@ if (G) {
 
   let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
   const goodbye = () => {
-    try { flushQC(true); } catch (e) {}
+    try { stopQC(); } catch (e) {}
     try { flushMarkersNow(); } catch (e) {}
     vcHideOverlay();
     try { scopeRemove(); } catch (e) {}
-    try { qcFilterRemove(); } catch (e) {}
     alive = false;                       // stop every mpv read from here on
     try { clearInterval(beatTimer); } catch (e) {}
     gSend("iinfo/bye", {});
