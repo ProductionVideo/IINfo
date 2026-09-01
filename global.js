@@ -104,6 +104,15 @@ var sync = (function () {
 // pins live at true top level so the GC can't reclaim the handlers IINA holds
 var PINS = [];
 
+// The global-entry onMessage callback scope intermittently fails to resolve JS
+// built-ins — seen live as "Can't find variable: String" spamming from onBeat
+// (~8×/s), which aborts every beat so the registry stales and players get swept.
+// Module-level vars survive that scope reliably (as `sync` above does), so the
+// handlers reference these aliases instead of the ambient globals.
+var _String = String;
+var _Object = Object;
+var _Date = Date;
+
 (function () {
   "use strict";
 
@@ -112,7 +121,7 @@ var PINS = [];
   var bcPending = false;
   var alignTimer = null;
   var BEAT_TTL = 20000;
-  var vc = { host: null, pending: null, grabTimer: null };   // A/B visual-compare orchestration
+  var vc = { host: null, pending: null, grabTimer: null, again: false };   // A/B visual-compare orchestration
 
   function onMsg(name, fn) { PINS.push(fn); G.onMessage(name, fn); }
   function defer(fn) { if (typeof setTimeout === "function") setTimeout(fn, 0); else fn(); }
@@ -123,7 +132,7 @@ var PINS = [];
   function ratB() { return sync.rationalize(fpsOf(compare.bId)); }
 
   function summary() {
-    return Object.keys(players).map(function (id) {
+    return _Object.keys(players).map(function (id) {
       var p = players[id];
       return {
         id: id, path: p.path || null, filename: p.filename || null,
@@ -147,7 +156,7 @@ var PINS = [];
 
   function toPlayer(id, name, data) {
     if (id == null) return;
-    var label = String(id);
+    var label = _String(id);
     if (label === "" || label === "null" || label === "undefined") return;
     defer(function () {
       try { G.postMessage(label, name, data); }
@@ -163,9 +172,9 @@ var PINS = [];
       compare = sync.reconcileCompare(compare, players);
       recomputeDerived();
       // a dropped / collapsed A-B pair tears the visual-compare overlay down
-      if (compare.vcompare && (!compare.aId || !compare.bId || String(compare.aId) === String(compare.bId))) vcStop();
+      if (compare.vcompare && (!compare.aId || !compare.bId || _String(compare.aId) === _String(compare.bId))) vcStop();
       var payload = { state: compare, players: summary(), delta: liveDelta() };
-      Object.keys(players).forEach(function (id) { toPlayer(id, "iinfo/compare", payload); });
+      _Object.keys(players).forEach(function (id) { toPlayer(id, "iinfo/compare", payload); });
     });
   }
 
@@ -199,15 +208,19 @@ var PINS = [];
     alignTimer = setTimeout(function () { alignTimer = null; alignBoth(); }, 260);
   }
 
-  /* ---- A/B visual compare: grab both frames, composite in an overlay on A ---- */
+  /* ---- A/B visual compare: grab both frames, composite in an overlay on A ----
+   * Grabs are a full-frame screenshot on each mpv thread + a big base64 message,
+   * so this stays deliberately lazy: one grab at a time (serialised via vc.again),
+   * ~600 ms debounce, and only on pause / frame-step / big seeks — never during a
+   * scrub drag. */
   function vcStop() {
     if (vc.grabTimer) { clearTimeout(vc.grabTimer); vc.grabTimer = null; }
     if (vc.host) toPlayer(vc.host, "iinfo/vcompare", { on: false });
-    vc.host = null; vc.pending = null;
+    vc.host = null; vc.pending = null; vc.again = false;
     compare.vcompare = false;
   }
   function vcStart() {
-    if (!compare.aId || !compare.bId || String(compare.aId) === String(compare.bId)) { vcStop(); return; }
+    if (!compare.aId || !compare.bId || _String(compare.aId) === _String(compare.bId)) { vcStop(); return; }
     compare.vcompare = true;
     compare.linked = true;
     vc.host = compare.aId;
@@ -216,15 +229,16 @@ var PINS = [];
   }
   function grabPair() {
     if (!compare.vcompare || !compare.aId || !compare.bId) return;
+    if (vc.pending) { vc.again = true; return; }   // a grab is in flight — queue one more
     vc.pending = { a: 1, b: 1 };
-    toPlayer(compare.aId, "iinfo/vgrab", { name: "iinfo-vc-A.png", slot: "a" });
-    toPlayer(compare.bId, "iinfo/vgrab", { name: "iinfo-vc-B.png", slot: "b" });
+    toPlayer(compare.aId, "iinfo/vgrab", { name: "iinfo-vc-A.jpg", slot: "a" });
+    toPlayer(compare.bId, "iinfo/vgrab", { name: "iinfo-vc-B.jpg", slot: "b" });
   }
   function scheduleGrab() {
     if (!compare.vcompare) return;
     if (typeof setTimeout !== "function") { grabPair(); return; }
     if (vc.grabTimer) clearTimeout(vc.grabTimer);
-    vc.grabTimer = setTimeout(function () { vc.grabTimer = null; grabPair(); }, 320);
+    vc.grabTimer = setTimeout(function () { vc.grabTimer = null; grabPair(); }, 600);
   }
   function onVgrabbed(data) {
     if (!vc.pending || !data || !data.slot) return;
@@ -232,15 +246,16 @@ var PINS = [];
     if (!vc.pending.a && !vc.pending.b) {
       vc.pending = null;
       toPlayer(vc.host || compare.aId, "iinfo/vready", {});
+      if (vc.again) { vc.again = false; scheduleGrab(); }
     }
   }
 
   /* ---- registry ---- */
   function onHello(data, playerID) {
-    var id = String(playerID);
+    var id = _String(playerID);
     var prev = players[id] || {};
     var pathChanged = !!(prev.path && data && data.path && prev.path !== data.path);
-    players[id] = Object.assign({}, prev, data || {}, { id: id, lastBeat: Date.now() });
+    players[id] = _Object.assign({}, prev, data || {}, { id: id, lastBeat: _Date.now() });
     toPlayer(id, "iinfo/you-are", { id: id });
     if (pathChanged && (id === compare.aId || id === compare.bId)) {
       compare.offsetFrames = 0; compare.offsetSec = 0;
@@ -251,19 +266,19 @@ var PINS = [];
     broadcast();
   }
   function onBeat(data, playerID) {
-    var id = String(playerID);
+    var id = _String(playerID);
     var p = players[id];
     if (!p) {
-      players[id] = Object.assign({ id: id }, data || {}, { lastBeat: Date.now() });
+      players[id] = _Object.assign({ id: id }, data || {}, { lastBeat: _Date.now() });
       toPlayer(id, "iinfo/you-are", { id: id });
       broadcast();
       return;
     }
     if (data) { p.pos = data.pos; p.frame = data.frame; p.paused = data.paused; }
-    p.lastBeat = Date.now();
+    p.lastBeat = _Date.now();
   }
   function onBye(data, playerID) {
-    var id = String(playerID);
+    var id = _String(playerID);
     if (players[id]) { delete players[id]; console.log("IINfo global: bye " + id); broadcast(); }
   }
 
@@ -273,8 +288,8 @@ var PINS = [];
     var f = sync.fpsNum(ratB()) || 25;
     switch (cmd.op) {
       case "assign":
-        if (cmd.slot === "A") compare.aId = cmd.id != null ? String(cmd.id) : null;
-        else if (cmd.slot === "B") compare.bId = cmd.id != null ? String(cmd.id) : null;
+        if (cmd.slot === "A") compare.aId = cmd.id != null ? _String(cmd.id) : null;
+        else if (cmd.slot === "B") compare.bId = cmd.id != null ? _String(cmd.id) : null;
         compare.offsetFrames = 0; compare.offsetSec = 0;
         if (compare.vcompare) { vcStop(); vcStart(); }
         break;
@@ -330,7 +345,7 @@ var PINS = [];
   /* ---- ganged transport: explicit verbs only ---- */
   function toAB(aData, bData) {
     toPlayer(compare.aId, "iinfo/gang-exec", aData);
-    if (String(compare.bId) !== String(compare.aId)) toPlayer(compare.bId, "iinfo/gang-exec", bData);
+    if (_String(compare.bId) !== _String(compare.aId)) toPlayer(compare.bId, "iinfo/gang-exec", bData);
   }
   function relay(action, value) {
     toAB({ action: action, value: value }, { action: action, value: value });
@@ -371,8 +386,10 @@ var PINS = [];
       case "speed-mult": if (typeof v === "number") relay("speed-mult", v); break;
       case "seek-abs":   if (typeof v === "number") gangSeekAbs(v); break;
     }
+    // re-grab only for settled moves — not seek-rel / nudge / seek-abs which
+    // fire continuously during a scrub drag
     if (compare.vcompare &&
-        ["pause", "frame-next", "frame-prev", "frame-jump", "seek-rel", "nudge", "seek-start", "seek-end", "seek-abs"].indexOf(cmd.action) >= 0) {
+        ["pause", "frame-next", "frame-prev", "frame-jump", "seek-start", "seek-end"].indexOf(cmd.action) >= 0) {
       scheduleGrab();
     }
   }
@@ -385,8 +402,8 @@ var PINS = [];
   onMsg("iinfo/vgrabbed", onVgrabbed);
 
   function sweepStale() {
-    var now = Date.now(), changed = false;
-    Object.keys(players).forEach(function (id) {
+    var now = _Date.now(), changed = false;
+    _Object.keys(players).forEach(function (id) {
       if (now - (players[id].lastBeat || 0) > BEAT_TTL) { delete players[id]; changed = true; }
     });
     if (changed) { console.log("IINfo global: swept stale player(s)"); broadcast(); }

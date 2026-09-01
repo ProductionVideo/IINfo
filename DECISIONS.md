@@ -190,6 +190,15 @@ state and the global entry relays that same verb to both — they always converg
 
 Discovered by testing in live IINA 1.4.4 (all undocumented):
 
+0. **(v0.5.0)** The callback scope flakiness (#4 below) is worse than "custom
+   top-level bindings" — under load it drops **JS built-ins**. Seen live:
+   `onBeat` throwing `ReferenceError: Can't find variable: String` ~8×/s, which
+   aborted every beat, stalled the registry, and got players swept. Fix: alias
+   the built-ins the handlers touch (`String`, `Object`, `Date`) into
+   **module-level** `var`s (which survive reliably, as `sync` does) and use those
+   — `_String(x)`, `_Object.assign`, `_Date.now()`.
+
+
 1. **`require()` doesn't return `module.exports`.** It loads the file and hands
    back `undefined`. `lib/sync.js` is therefore *inlined* verbatim into
    `global.js` (and `main.js` doesn't need it). `lib/sync.js` stays as the

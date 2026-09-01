@@ -2,7 +2,15 @@
 
 ## 0.5.0
 
-**A/B Visual Compare — overlay two frames and actually see the difference.**
+**A/V compare stability fix + experimental A/B Visual Compare.**
+
+- **Fix:** the global entry's message callbacks were intermittently losing their
+  scope — `onBeat` throwing `ReferenceError: Can't find variable: String` several
+  times a second, which stalled the player registry and made linked A/B compare
+  drift and churn. The built-ins the handlers use are now pinned into module
+  scope.
+
+**A/B Visual Compare (experimental — enable it in Tools ▸ Appearance).**
 
 With A and B assigned, tick **Visual compare** in the A/B Compare panel. An
 overlay opens on **window A** with the two aligned frames composited:
@@ -15,14 +23,16 @@ overlay opens on **window A** with the two aligned frames composited:
 - **Onion** — A and B blended at an adjustable opacity.
 - Plus plain **A** / **B**.
 
-It's a *paused* tool — it re-grabs both frames on every ganged step / seek (and
-enabling it auto-links transport). Keyboard `1`–`6` for modes, `[` `]` for the
-slider, `r` to re-grab, `Esc` to exit. Different resolutions disable Difference
-(a resample can't be pixel-diffed) but the other modes still work.
+It's a *paused* tool — it re-grabs both frames on pause / frame-step / big seeks
+(one grab at a time, ~0.6 s debounce), and enabling it auto-links transport.
+Keyboard `1`–`6` for modes, `[` `]` for the slider, `r` to re-grab, `Esc` to
+exit. Different resolutions disable Difference (a resample can't be pixel-diffed)
+but the other modes still work.
 
-Frames come from `screenshot-to-file` composited in a canvas — no video
-compositing, no extra permission. Internals: `ui/vcompare.*`, `ui/vcfit.js` +
-`test/vcfit.test.js`; see `DECISIONS.md`.
+Frames are JPEG `screenshot-to-file` grabs composited in a canvas — no video
+compositing. Needs the `video-overlay` permission. **Known: performance is still
+rough on 4K/ProRes; that's why it's behind the experimental flag.** Internals:
+`ui/vcompare.*`, `ui/vcfit.js` + `test/vcfit.test.js`; see `DECISIONS.md`.
 
 ## 0.4.0
 

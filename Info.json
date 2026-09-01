@@ -14,7 +14,8 @@
   "globalEntry": "global.js",
   "permissions": [
     "show-osd",
-    "file-system"
+    "file-system",
+    "video-overlay"
   ],
   "preferenceDefaults": {
     "config": ""

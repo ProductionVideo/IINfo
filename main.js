@@ -833,12 +833,14 @@ function b64(u8) {           // JavaScriptCore has no btoa
   else if (n - i === 2) { const t = (u8[i] << 16) | (u8[i + 1] << 8); out += B64[(t >> 18) & 63] + B64[(t >> 12) & 63] + B64[(t >> 6) & 63] + "="; }
   return out;
 }
-function readDataURI(pseudoPath, tries) {
-  tries = tries || 0;
+function readDataURI(pseudoPath) {
   try {
     if (file.exists(pseudoPath)) {
       const bytes = file.handle(pseudoPath, "read").readToEnd();
-      if (bytes && bytes.length > 64) return "data:image/png;base64," + b64(bytes);
+      if (bytes && bytes.length > 64) {
+        const mime = /\.jpe?g$/i.test(pseudoPath) ? "image/jpeg" : "image/png";
+        return "data:" + mime + ";base64," + b64(bytes);
+      }
     }
   } catch (e) { /* not written yet */ }
   return null;
@@ -852,14 +854,28 @@ function wireOverlay() {
 function pushFrames(attempt) {
   attempt = attempt || 0;
   if (!vcOn) return;
-  const a = readDataURI("@tmp/iinfo-vc-A.png");
-  const bb = readDataURI("@tmp/iinfo-vc-B.png");
+  const a = readDataURI("@tmp/iinfo-vc-A.jpg");
+  const bb = readDataURI("@tmp/iinfo-vc-B.jpg");
   if ((!a || !bb) && attempt < 5) { later(() => pushFrames(attempt + 1), 130); return; }
   if (!a && !bb) return;
   const vp = native("video-params") || {};
   try { overlay.postMessage("frames", { a: a, b: bb, wA: vp.w || null, hA: vp.h || null }); } catch (e) {}
 }
 function vcHideOverlay() { vcOn = false; try { overlay.hide(); } catch (e) {} }
+function openVcOverlay(attempt) {
+  if (!alive) return;
+  try {
+    overlay.loadFile("ui/vcompare.html");
+    wireOverlay();
+    overlay.setClickable(true);
+    overlay.show();
+    vcOn = true;
+  } catch (e) {
+    // the player window may not be ready yet — retry a couple of times
+    console.log("IINfo: overlay open — " + e);
+    if ((attempt || 0) < 3) later(() => openVcOverlay((attempt || 0) + 1), 350);
+  }
+}
 
 if (G) {
   try {
@@ -872,17 +888,8 @@ if (G) {
     }));
     G.onMessage("iinfo/vcompare", pin((d) => {
       if (!alive) return;
-      if (d && d.on) {
-        try {
-          overlay.loadFile("ui/vcompare.html");
-          wireOverlay();
-          overlay.setClickable(true);
-          overlay.show();
-          vcOn = true;
-        } catch (e) { console.log("IINfo: overlay open — " + e); }
-      } else {
-        vcHideOverlay();
-      }
+      if (d && d.on) openVcOverlay(0);
+      else vcHideOverlay();
     }));
     G.onMessage("iinfo/vgrab", pin((d) => {
       if (!alive || !d || !d.name) return;

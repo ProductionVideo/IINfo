@@ -96,20 +96,22 @@
     ctx.globalCompositeOperation = "difference";
     ctx.drawImage(imgB, rectA.x, rectA.y, rectA.w, rectA.h);
     ctx.globalCompositeOperation = "source-over";
-    if (gain > 1) {
-      var rx = Math.max(0, Math.floor(rectA.x)), ry = Math.max(0, Math.floor(rectA.y));
-      var rw = Math.min(cv.width - rx, Math.ceil(rectA.w)), rh = Math.min(cv.height - ry, Math.ceil(rectA.h));
-      if (rw > 0 && rh > 0) {
-        try {
-          var id = ctx.getImageData(rx, ry, rw, rh), p = id.data;
-          for (var i = 0; i < p.length; i += 4) {
-            p[i] = Math.min(255, p[i] * gain);
-            p[i + 1] = Math.min(255, p[i + 1] * gain);
-            p[i + 2] = Math.min(255, p[i + 2] * gain);
+    // frames are JPEG-compressed, so knock out a small noise floor, then apply gain
+    var FLOOR = 5;
+    var rx = Math.max(0, Math.floor(rectA.x)), ry = Math.max(0, Math.floor(rectA.y));
+    var rw = Math.min(cv.width - rx, Math.ceil(rectA.w)), rh = Math.min(cv.height - ry, Math.ceil(rectA.h));
+    if (rw > 0 && rh > 0) {
+      try {
+        var id = ctx.getImageData(rx, ry, rw, rh), p = id.data;
+        for (var i = 0; i < p.length; i += 4) {
+          for (var c = 0; c < 3; c++) {
+            var vv = p[i + c];
+            vv = vv <= FLOOR ? 0 : (vv - FLOOR) * gain;
+            p[i + c] = vv > 255 ? 255 : vv;
           }
-          ctx.putImageData(id, rx, ry);
-        } catch (e) { /* tainted canvas shouldn't happen with data URIs */ }
-      }
+        }
+        ctx.putImageData(id, rx, ry);
+      } catch (e) { /* tainted canvas shouldn't happen with data URIs */ }
     }
     note("difference" + (gain > 1 ? " ×" + gain : "") + "  ·  " + dims());
   }
