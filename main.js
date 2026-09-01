@@ -10,7 +10,7 @@
  *   - persist the webview's panel/settings config via iina.preferences
  */
 
-const { console, core, event, mpv, menu, standaloneWindow, preferences, file } = iina;
+const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
 
 console.log("IINfo: main entry loading (v0.4.0)");
 
@@ -744,6 +744,7 @@ function on(ev, fn) { pin(fn); try { event.on(ev, fn); } catch (e) { console.log
 on("iina.file-loaded", () => {
   fileGen++;
   if (G) gHello();   // path / fps / duration may all have changed
+  if (vcOn) gSend("iinfo/compare-cmd", { op: "vcompare", on: false });  // new content — drop the compare overlay
   maybeLoadMarkers();
   if (wantWindow) standaloneWindow.postMessage("iinfo-data", collect());
 });
@@ -815,6 +816,51 @@ function gSend(name, data) { if (!G) return; try { G.postMessage(name, data); } 
 function gHello() { gSend("iinfo/hello", gMeta()); }
 function gBeat()  { gSend("iinfo/beat", { pos: num("time-pos"), frame: num("estimated-frame-number"), paused: flag("pause") }); }
 
+/* ---- A/B visual compare: this window (when it is A) hosts the overlay ---- */
+let vcOn = false;
+const OV_PINS = [];
+function onOv(name, fn) { OV_PINS.push(fn); try { overlay.onMessage(name, fn); } catch (e) {} }
+function later(fn, ms) { if (typeof setTimeout === "function") setTimeout(fn, ms || 0); else fn(); }
+
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64(u8) {           // JavaScriptCore has no btoa
+  let out = "", i = 0, n = u8.length;
+  for (; i + 2 < n; i += 3) {
+    const t = (u8[i] << 16) | (u8[i + 1] << 8) | u8[i + 2];
+    out += B64[(t >> 18) & 63] + B64[(t >> 12) & 63] + B64[(t >> 6) & 63] + B64[t & 63];
+  }
+  if (n - i === 1) { const t = u8[i] << 16; out += B64[(t >> 18) & 63] + B64[(t >> 12) & 63] + "=="; }
+  else if (n - i === 2) { const t = (u8[i] << 16) | (u8[i + 1] << 8); out += B64[(t >> 18) & 63] + B64[(t >> 12) & 63] + B64[(t >> 6) & 63] + "="; }
+  return out;
+}
+function readDataURI(pseudoPath, tries) {
+  tries = tries || 0;
+  try {
+    if (file.exists(pseudoPath)) {
+      const bytes = file.handle(pseudoPath, "read").readToEnd();
+      if (bytes && bytes.length > 64) return "data:image/png;base64," + b64(bytes);
+    }
+  } catch (e) { /* not written yet */ }
+  return null;
+}
+function wireOverlay() {
+  OV_PINS.length = 0;
+  onOv("iinfo-vc-ready", () => pushFrames());
+  onOv("iinfo-vc-exit", () => gSend("iinfo/compare-cmd", { op: "vcompare", on: false }));
+  onOv("iinfo-vc-refresh", () => gSend("iinfo/compare-cmd", { op: "vgrab-now" }));
+}
+function pushFrames(attempt) {
+  attempt = attempt || 0;
+  if (!vcOn) return;
+  const a = readDataURI("@tmp/iinfo-vc-A.png");
+  const bb = readDataURI("@tmp/iinfo-vc-B.png");
+  if ((!a || !bb) && attempt < 5) { later(() => pushFrames(attempt + 1), 130); return; }
+  if (!a && !bb) return;
+  const vp = native("video-params") || {};
+  try { overlay.postMessage("frames", { a: a, b: bb, wA: vp.w || null, hA: vp.h || null }); } catch (e) {}
+}
+function vcHideOverlay() { vcOn = false; try { overlay.hide(); } catch (e) {} }
+
 if (G) {
   try {
     G.onMessage("iinfo/you-are", pin((d) => { if (d && d.id != null) myId = String(d.id); }));
@@ -824,6 +870,28 @@ if (G) {
       runAction(d.action, d.value);
       gBeat();   // report the new position so the global entry can align off it
     }));
+    G.onMessage("iinfo/vcompare", pin((d) => {
+      if (!alive) return;
+      if (d && d.on) {
+        try {
+          overlay.loadFile("ui/vcompare.html");
+          wireOverlay();
+          overlay.setClickable(true);
+          overlay.show();
+          vcOn = true;
+        } catch (e) { console.log("IINfo: overlay open — " + e); }
+      } else {
+        vcHideOverlay();
+      }
+    }));
+    G.onMessage("iinfo/vgrab", pin((d) => {
+      if (!alive || !d || !d.name) return;
+      try {
+        mpv.command("screenshot-to-file", [utils.resolvePath("@tmp/" + d.name), "video"]);
+      } catch (e) { console.log("IINfo: screenshot-to-file — " + e); }
+      later(() => gSend("iinfo/vgrabbed", { slot: d.slot }), 180);
+    }));
+    G.onMessage("iinfo/vready", pin(() => { pushFrames(); }));
     console.log("IINfo: A/B compare wired to global entry");
   } catch (e) { console.log("IINfo: global wiring — " + e); }
 
@@ -835,6 +903,7 @@ if (G) {
   let beatTimer = setInterval(() => { if (alive) gBeat(); }, 2000);
   const goodbye = () => {
     try { flushMarkersNow(); } catch (e) {}
+    vcHideOverlay();
     alive = false;                       // stop every mpv read from here on
     try { clearInterval(beatTimer); } catch (e) {}
     gSend("iinfo/bye", {});

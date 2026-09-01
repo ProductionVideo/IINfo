@@ -650,6 +650,19 @@
     linkRow.appendChild(deltaVal);
     wrap.appendChild(linkRow);
 
+    var vcRow = el("div", "cmp-row");
+    var vcLab = el("label", "cmp-link");
+    var vcCb = el("input"); vcCb.type = "checkbox";
+    vcCb.addEventListener("change", function () { cmd({ op: "vcompare", on: vcCb.checked }); });
+    vcLab.appendChild(vcCb);
+    vcLab.appendChild(el("span", null, "Visual compare"));
+    vcRow.appendChild(vcLab);
+    wrap.appendChild(vcRow);
+    var vcHint = el("div", "hint", "Flicker / wipe / difference overlay on window A — paused comparison, step to update.");
+    vcHint.style.textAlign = "left";
+    vcHint.style.padding = "2px 0 0";
+    wrap.appendChild(vcHint);
+
     body.appendChild(wrap);
     p.appendChild(body);
 
@@ -692,6 +705,10 @@
         if (linkCb.checked !== !!s.linked) linkCb.checked = !!s.linked;
 
         var paired = !!(s.aId && s.bId);
+        var distinct = paired && String(s.aId) !== String(s.bId);
+        if (vcCb.checked !== !!s.vcompare) vcCb.checked = !!s.vcompare;
+        vcCb.disabled = !distinct;
+        vcRow.style.opacity = distinct ? "" : ".5";
 
         // B's live distance from the sync point (A + offset)
         var fpsB = null;

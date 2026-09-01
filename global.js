@@ -108,10 +108,11 @@ var PINS = [];
   "use strict";
 
   var players = {};   // label -> { id, path, filename, w, h, fps, duration, pos, frame, paused, lastBeat }
-  var compare = { aId: null, bId: null, linked: false, offsetFrames: 0, offsetSec: 0, mode: "frame-offset", fpsMismatch: false };
+  var compare = { aId: null, bId: null, linked: false, offsetFrames: 0, offsetSec: 0, mode: "frame-offset", fpsMismatch: false, vcompare: false };
   var bcPending = false;
   var alignTimer = null;
   var BEAT_TTL = 20000;
+  var vc = { host: null, pending: null, grabTimer: null };   // A/B visual-compare orchestration
 
   function onMsg(name, fn) { PINS.push(fn); G.onMessage(name, fn); }
   function defer(fn) { if (typeof setTimeout === "function") setTimeout(fn, 0); else fn(); }
@@ -161,6 +162,8 @@ var PINS = [];
       bcPending = false;
       compare = sync.reconcileCompare(compare, players);
       recomputeDerived();
+      // a dropped / collapsed A-B pair tears the visual-compare overlay down
+      if (compare.vcompare && (!compare.aId || !compare.bId || String(compare.aId) === String(compare.bId))) vcStop();
       var payload = { state: compare, players: summary(), delta: liveDelta() };
       Object.keys(players).forEach(function (id) { toPlayer(id, "iinfo/compare", payload); });
     });
@@ -196,6 +199,42 @@ var PINS = [];
     alignTimer = setTimeout(function () { alignTimer = null; alignBoth(); }, 260);
   }
 
+  /* ---- A/B visual compare: grab both frames, composite in an overlay on A ---- */
+  function vcStop() {
+    if (vc.grabTimer) { clearTimeout(vc.grabTimer); vc.grabTimer = null; }
+    if (vc.host) toPlayer(vc.host, "iinfo/vcompare", { on: false });
+    vc.host = null; vc.pending = null;
+    compare.vcompare = false;
+  }
+  function vcStart() {
+    if (!compare.aId || !compare.bId || String(compare.aId) === String(compare.bId)) { vcStop(); return; }
+    compare.vcompare = true;
+    compare.linked = true;
+    vc.host = compare.aId;
+    toPlayer(compare.aId, "iinfo/vcompare", { on: true, bId: compare.bId });
+    grabPair();
+  }
+  function grabPair() {
+    if (!compare.vcompare || !compare.aId || !compare.bId) return;
+    vc.pending = { a: 1, b: 1 };
+    toPlayer(compare.aId, "iinfo/vgrab", { name: "iinfo-vc-A.png", slot: "a" });
+    toPlayer(compare.bId, "iinfo/vgrab", { name: "iinfo-vc-B.png", slot: "b" });
+  }
+  function scheduleGrab() {
+    if (!compare.vcompare) return;
+    if (typeof setTimeout !== "function") { grabPair(); return; }
+    if (vc.grabTimer) clearTimeout(vc.grabTimer);
+    vc.grabTimer = setTimeout(function () { vc.grabTimer = null; grabPair(); }, 320);
+  }
+  function onVgrabbed(data) {
+    if (!vc.pending || !data || !data.slot) return;
+    delete vc.pending[data.slot];
+    if (!vc.pending.a && !vc.pending.b) {
+      vc.pending = null;
+      toPlayer(vc.host || compare.aId, "iinfo/vready", {});
+    }
+  }
+
   /* ---- registry ---- */
   function onHello(data, playerID) {
     var id = String(playerID);
@@ -205,6 +244,7 @@ var PINS = [];
     toPlayer(id, "iinfo/you-are", { id: id });
     if (pathChanged && (id === compare.aId || id === compare.bId)) {
       compare.offsetFrames = 0; compare.offsetSec = 0;
+      if (compare.vcompare) vcStop();   // new content — the grabbed pair is stale
       console.log("IINfo global: " + id + " changed file — offset reset");
     }
     console.log("IINfo global: hello " + id + " (" + (data && data.filename) + ")");
@@ -236,11 +276,13 @@ var PINS = [];
         if (cmd.slot === "A") compare.aId = cmd.id != null ? String(cmd.id) : null;
         else if (cmd.slot === "B") compare.bId = cmd.id != null ? String(cmd.id) : null;
         compare.offsetFrames = 0; compare.offsetSec = 0;
+        if (compare.vcompare) { vcStop(); vcStart(); }
         break;
       case "swap": {
         var t = compare.aId; compare.aId = compare.bId; compare.bId = t;
         compare.offsetFrames = -(compare.offsetFrames || 0);
         compare.offsetSec = -(compare.offsetSec || 0);
+        if (compare.vcompare) { vcStop(); vcStart(); }   // overlay moves to the new A
         break;
       }
       case "link":    compare.linked = !!(compare.aId && compare.bId); break;
@@ -274,6 +316,12 @@ var PINS = [];
       }
       case "resync":
         alignBoth();
+        return;
+      case "vcompare":
+        if (cmd.on) vcStart(); else vcStop();
+        break;
+      case "vgrab-now":
+        grabPair();
         return;
     }
     broadcast();
@@ -323,6 +371,10 @@ var PINS = [];
       case "speed-mult": if (typeof v === "number") relay("speed-mult", v); break;
       case "seek-abs":   if (typeof v === "number") gangSeekAbs(v); break;
     }
+    if (compare.vcompare &&
+        ["pause", "frame-next", "frame-prev", "frame-jump", "seek-rel", "nudge", "seek-start", "seek-end", "seek-abs"].indexOf(cmd.action) >= 0) {
+      scheduleGrab();
+    }
   }
 
   onMsg("iinfo/hello", onHello);
@@ -330,6 +382,7 @@ var PINS = [];
   onMsg("iinfo/bye", onBye);
   onMsg("iinfo/compare-cmd", onCompareCmd);
   onMsg("iinfo/gang", onGang);
+  onMsg("iinfo/vgrabbed", onVgrabbed);
 
   function sweepStale() {
     var now = Date.now(), changed = false;
