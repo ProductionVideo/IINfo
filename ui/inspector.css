@@ -293,12 +293,19 @@ canvas.wave { width: 100%; display: block; background: var(--panel-2); border: 1
 .badge.P { color: var(--warn); border-color: var(--warn); }
 .badge.B { color: var(--good); border-color: var(--good); }
 
-/* panels + display drawer */
-#drawer { display: none; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 10px 11px; gap: 14px 22px; }
-#drawer.open { display: flex; flex-wrap: wrap; align-items: flex-start; }
-.drawer-group { display: flex; flex-direction: column; gap: 7px; min-width: 190px; }
-.drawer-head { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-.drawer-panels { display: flex; flex-wrap: wrap; gap: 6px 16px; max-width: 360px; }
+/* Tools drawer (tabbed) */
+#drawer { display: none; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 0; }
+#drawer.open { display: block; }
+.drawer-tabs { display: flex; gap: 2px; padding: 6px 11px 0; border-bottom: 1px solid var(--border); }
+.drawer-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--faint);
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  padding: 6px 9px; cursor: pointer;
+}
+.drawer-tab:hover { color: var(--dim); }
+.drawer-tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.drawer-body { padding: 10px 11px; display: flex; flex-direction: column; gap: 7px; }
+.drawer-head { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-top: 2px; }
 #drawer label { display: flex; align-items: center; gap: 6px; color: var(--dim); cursor: pointer; user-select: none; font-size: 12px; }
 #drawer input { accent-color: var(--accent); }
 .set-row { justify-content: space-between; gap: 10px; }
@@ -310,6 +317,14 @@ canvas.wave { width: 100%; display: block; background: var(--panel-2); border: 1
 }
 #drawer select:focus { outline: none; border-color: var(--accent); }
 .drawer-note { font-size: 10px; color: var(--faint); }
+.drawer-note.bad { color: var(--bad); }
+
+.panel-order-row { display: flex; align-items: center; gap: 8px; }
+.por-label { flex: 1 1 auto; }
+.por-move { display: inline-flex; gap: 3px; flex: none; }
+.por-move .mini { width: 24px; padding: 0; text-align: center; }
+.por-move .mini:disabled { opacity: .3; cursor: default; }
+.actions-row { display: flex; flex-wrap: wrap; gap: 6px; }
 
 dialog {
   background: var(--panel); color: var(--text); border: 1px solid var(--border);
@@ -355,10 +370,6 @@ body.ganged .jump input { border-color: var(--accent); }
 /* ================= QC markers panel ================= */
 .qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .qc-filter { flex: 0 1 120px; height: 26px; }
-.qc-export-row {
-  display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 10px;
-  padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
-}
 
 .qc-list { display: flex; flex-direction: column; }
 .qc-row {

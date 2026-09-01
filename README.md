@@ -34,7 +34,12 @@ persist:
 
 **Controls:** skip to start / end · frame step · stateful play/pause · jump bar
 (`−10s −1s −10f −5f · +5f +10f +1s +10s`) · exact-frame screenshot · click/drag
-scrub bar · **Report** (plain-text dump of every field).
+scrub bar.
+
+**Tools** (drawer): **Panels** — toggle and reorder every panel · **Appearance**
+— theme / font / size · **Storage** — where QC markers are kept · **Actions** —
+copy the plain-text QC report, export markers (report / CSV / JSON / sidecar),
+exact-frame screenshot.
 
 **Go field** — absolute: a timecode (`01:23:45;12`), `#4736` (frame), `50%`, `90s`.
 Relative to the current point, repeatable on each Enter: `+5` / `-5` (seconds),
@@ -46,9 +51,9 @@ Every jump snaps to the nearest frame.
 `Shift`+`←`/`→` frame step · `m` mute · `[`/`]` speed · `Home`/`End` · `⇧M` mark QC issue.
 Menu bindings: `⌥⇧I` toggle · `⌥⇧←/→` frame step · `⌥⇧S` screenshot · `⌥⇧M` mark QC issue.
 
-**Display:** Black (OLED, default) / Dark / Graphite / Midnight Blue / Green Phosphor
-/ Amber CRT / High contrast / Light / Auto · readout font (Courier default + a dozen
-mono faces) · text size XS–XXL.
+**Appearance:** Black (OLED, default) / Dark / Graphite / Midnight Blue / Green
+Phosphor / Amber CRT / High contrast / Light / Auto · readout font (Courier default
++ a dozen mono faces) · text size XS–XXL.
 
 ## Install
 
