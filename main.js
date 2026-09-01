@@ -599,6 +599,8 @@ function tickQC() {
 // start/stop the whole pass — the only way qcRunning ever changes
 function startQC() {
   if (!alive || qcRunning) return;
+  // Deep QC is gated behind "Experimental features" for now (heavy per-frame pass)
+  if (!(lastConfig && lastConfig.settings && lastConfig.settings.experimental)) return;
   qcRunning = true;
   qcAnalyzeState = deepqc.initState();
   tickQC();

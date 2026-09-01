@@ -60,6 +60,27 @@ needs `freezedetect`; mpv keeps the last metadata dict, so `freeze_start` is
 re-read across polls and deduped on its value, with a corrected duration emitted
 once `freeze_end` lands.
 
+### Ships experimental; mpv's watch-later can resurrect a labelled filter
+
+Deep QC ships behind **Tools ▸ Appearance ▸ Experimental features** (default
+off) — the panel is filtered out of the drawer and `startQC()` refuses unless
+`lastConfig.settings.experimental`. On a stitched/panoramic source (an 8400×1344
+clip in live testing) `signalstats=stat=tout+vrep+brng` pushed IINA past 300 %
+CPU on its own; the feature is genuinely useful but its performance envelope
+isn't settled, so it stays opt-in-behind-a-flag alongside A/B Visual Compare.
+
+Live testing also turned up an mpv-level trap unrelated to our gating: IINA's
+default `watch-later-options` list includes `vf` and `af`, so mpv **saves the
+current filter chain into that file's resume config and re-applies it verbatim
+when the same file is next opened** — before any plugin JS runs. A file closed
+while `@iinfoqc` (or `@iinfoscope`) happened to be active gets that filter baked
+into its watch-later state and briefly re-armed at t≈0 on reopen. `stopQC()` /
+`tickScope()` from `iina.file-loaded` strip it within ~1 s (before real decode
+traffic), so the practical cost is near zero, but it's why "it's running and I
+didn't start it" can still appear to happen. Not worth fighting from the plugin
+(no clean API to edit IINA's watch-later-options); documented here so it isn't
+re-diagnosed from scratch.
+
 ## Video Scopes (v0.6.0)
 
 ### mpv renders the scope, on the video — same lifecycle as the audio filter

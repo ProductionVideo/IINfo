@@ -2,11 +2,17 @@
 
 ## 0.7.0
 
-**Deep QC — automated defect detection on the timeline.**
+**Deep QC (experimental) — automated defect detection on the timeline. QC
+reports are now Markdown.**
 
-New **Deep QC** panel. **▶ Start analysis** runs FFmpeg's own analysis filters
-over the video for as long as you leave it running, turning what they find into
-QC markers:
+The **Copy QC report** and the marker **Report** export are now Markdown —
+headed sections and a marker table that pastes cleanly into a ticket, PR or doc.
+CSV and JSON exports are unchanged.
+
+New **Deep QC** panel, behind **Tools ▸ Appearance ▸ Experimental features**
+(off by default — it's a heavy per-frame pass, see below). **▶ Start analysis**
+runs FFmpeg's own analysis filters over the video for as long as you leave it
+running, turning what they find into QC markers:
 
 - **Freeze / held frames** (`freezedetect`) · **black frames** · **broadcast-range
   violations** (BRNG) · **temporal outliers** (TOUT, noise / dropout) · **vertical
@@ -19,9 +25,10 @@ QC markers:
 - **Strictly opt-in, every time:** analysis never starts on its own — not on
   opening the panel, not on loading a file, not on relaunching IINA. It only
   starts on **▶ Start analysis** and stops itself when the file ends, the panel
-  or window closes, or you hit **■ Stop**. It analyses every decoded frame and
-  costs real hardware-decode performance, so it's meant as a deliberate pass —
-  play through the section you want checked, then stop. No new permission.
+  or window closes, or you hit **■ Stop**. It analyses every decoded frame,
+  which forces software decode paths and costs real performance — especially on
+  large frames — so it's a deliberate pass: play through the section you want
+  checked, then stop. No new permission.
 
 Internals: a labelled analysis-only `@iinfoqc` vf filter with the same
 poll-driven, self-healing lifecycle as the audio filter and video scopes, armed

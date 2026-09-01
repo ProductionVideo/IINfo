@@ -30,7 +30,7 @@ your layout persists.
 | **A/B Compare** | Line two open windows up as A / B — offset, link transport, step together frame-accurately |
 | **A/B Technical Diff** | A and B's codec / resolution / fps / pixel format / bit depth / colour / audio params side by side, every difference flagged |
 | **QC Markers** | Mark issues at the exact frame, tag and navigate them, see them on the scrub bar, export |
-| **Deep QC** | User-started automated defect detection — freeze / black / broadcast-range / noise / line-repeat — fed onto the QC Markers timeline (see below) |
+| **Deep QC** *(experimental)* | User-started automated defect detection — freeze / black / broadcast-range / noise / line-repeat — fed onto the QC Markers timeline (see below) |
 | **Audio Waveform** | Live scrolling min–max + RMS curves, per channel or summed. Themed accent; red only where a sample clips |
 | **Audio Levels** | Per-channel meters — RMS on a theme-accent gradient that turns amber/red only near clip, plus peak and peak-hold ticks |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, LRA, True Peak, target reference, momentary sparkline |
@@ -61,13 +61,16 @@ the A and B identities. Tag each marker (category / severity / note), walk them
 with Prev / Next, and they show as ticks on the scrub bar — click to seek.
 Markers persist per media (in the plugin data folder, or a `<media>.iinfo.json`
 sidecar if you turn that on in Tools ▸ Storage) and export from **Tools ▸
-Actions** as a report / CSV / full-schema JSON.
+Actions** as a **Markdown** report, CSV, or full-schema JSON. **Copy QC report**
+gives you a Markdown snapshot of the whole clip — technical params plus the
+marker table.
 
-## Deep QC
+## Deep QC (experimental)
 
-**Tools ▸ Panels ▸ Deep QC**, then **▶ Start analysis**. IINfo runs FFmpeg's own
-analysis filters over the video for as long as you leave it running, turning
-what they find into QC markers:
+Turn on **Tools ▸ Appearance ▸ Experimental features**, then **Tools ▸ Panels ▸
+Deep QC** and **▶ Start analysis**. IINfo runs FFmpeg's own analysis filters over
+the video for as long as you leave it running, turning what they find into QC
+markers:
 
 - **Freeze / held frames**, **black frames**, **broadcast-range violations**
   (BRNG), **temporal outliers** (noise / dropout, TOUT), **vertical line
@@ -79,10 +82,11 @@ what they find into QC markers:
   and TOUT.
 - **It's a deliberate pass, not a background feature.** Analysis never starts on
   its own — opening the panel, opening a file, or relaunching IINA never arms
-  it. It analyses every decoded frame, which forces software paths and costs
-  hardware-decode performance, so you start it explicitly, play through the
-  section you want checked, then **■ Stop** (or let it stop itself at end of
-  file / on close). No new permission.
+  it. It analyses every decoded frame, which forces software decode paths and
+  costs real performance — heavier the larger the frame — so you start it
+  explicitly, play through the section you want checked, then **■ Stop** (or let
+  it stop itself at end of file / on close). Experimental while the performance
+  profile settles. No new permission.
 
 ## Video scopes
 
@@ -165,8 +169,9 @@ Settings persist via `iina.preferences`. Permissions used: `show-osd`,
 - Ganged A/B playback is best-effort; frame accuracy is in the paused / stepped
   state. Both windows must be in the same IINA process.
 - Video scopes, Deep QC and Visual Compare are CPU filters / screenshot-based —
-  they can cost hardware-decode performance. Deep QC also samples `signalstats`
-  at the poll rate, so very brief transient defects between polls can be missed.
+  they can cost hardware-decode performance, sharply so on large frames. Deep QC
+  (experimental) also samples `signalstats` at the poll rate, so very brief
+  transient defects between polls can be missed.
 - Timecode uses `container-fps`, falling back to an estimate; drop-frame is
   assumed for the 29.97 / 59.94 family only.
 - `video-frame-info` fields vary by mpv build.

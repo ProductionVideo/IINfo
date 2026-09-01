@@ -1465,7 +1465,9 @@
     dr.appendChild(tabRow);
 
     /* Panels — visibility + order */
-    var ord = panelOrder();
+    var ord = panelOrder().filter(function (kk) {
+      return kk !== "deepqc" || state.settings.experimental;   // Deep QC is experimental for now
+    });
     ord.forEach(function (kk, idx) {
       var row = el("div", "panel-order-row");
       var lab = el("label", "por-label");
@@ -1517,6 +1519,8 @@
     var xpcb = el("input"); xpcb.type = "checkbox"; xpcb.checked = !!state.settings.experimental;
     xpcb.addEventListener("change", function () {
       state.settings.experimental = xpcb.checked;
+      if (!xpcb.checked && state.panels.deepqc) state.panels.deepqc = false;
+      applyVisibility(); buildDrawer();
       pushConfig();
       if (state.data) applyData();   // reveal / hide experimental controls
     });
@@ -1524,7 +1528,7 @@
     xpRow.appendChild(el("span", "set-label", "Experimental features"));
     ab.appendChild(xpRow);
 
-    ab.appendChild(el("div", "drawer-note", "Experimental: A/B Visual Compare (flicker / wipe / difference overlay) — usable but rough on performance. † font falls back to a system monospace unless installed."));
+    ab.appendChild(el("div", "drawer-note", "Experimental: Deep QC (automated defect detection — a heavy per-frame analysis pass) and A/B Visual Compare (flicker / wipe / difference overlay). Both are usable but costly on performance. † font falls back to a system monospace unless installed."));
 
     /* Storage */
     var sb = body.storage;
@@ -1550,7 +1554,7 @@
     [["Report", "report"], ["CSV", "csv"], ["JSON", "json"], ["Save JSON…", "save-json"], ["Save sidecar", "save-sidecar"]]
       .forEach(function (o) { actBtn(exRow, o[0], function () { doExport(o[1]); }); });
     body.actions.appendChild(exRow);
-    body.actions.appendChild(el("div", "drawer-note", "Deep-QC scan and video scopes will live here."));
+    body.actions.appendChild(el("div", "drawer-note", "Report and Export are Markdown / CSV / JSON."));
 
     DRAWER_TABS.forEach(function (t) { dr.appendChild(body[t[0]]); });
     showDrawerTab();
@@ -1593,6 +1597,9 @@
       if (cfg.settings.drawerTab) state.settings.drawerTab = cfg.settings.drawerTab;
     }
     if (cfg && cfg.win) state.win = cfg.win;
+    // Deep QC is experimental for now — never show it (or let the plugin arm it)
+    // unless Experimental features is on
+    if (!state.settings.experimental) state.panels.deepqc = false;
     applySettings();
     remountPanels(); buildDrawer(); applyVisibility();
     if (state.data) applyData();
@@ -2033,34 +2040,47 @@
   function buildReport() {
     var d = state.data; if (!d) return "No data yet.";
     var v = d.video, a = d.audio, pf = d.perf, r = d.meter.raw || {}, L = [];
-    L.push("IINfo QC report — " + new Date().toISOString());
-    L.push("File: " + orDash(d.file.path));
+    L.push("# IINfo QC report");
     L.push("");
-    L.push("[Timecode] " + ((d.time.dropFrame ? d.time.timecode : d.time.timecodeNDF) || "—") +
-      "  frame " + fmtInt(d.time.frame) + " / " + fmtInt(d.time.frameCount));
-    L.push("  fps " + fmt(d.time.fps, 6) + " (" + orDash(d.time.fpsSource) + ")  " + (d.time.dropFrame ? "DROP-FRAME" : "non-drop"));
-    L.push("  position " + clock(d.time.pos) + " / " + clock(d.time.duration));
+    L.push("- **File:** " + (d.file.path ? "`" + d.file.path + "`" : "—"));
+    L.push("- **Generated:** " + new Date().toISOString());
     L.push("");
-    L.push("[Frame] type=" + orDash(d.frameInfo.pictureType) + " keyframe=" + d.frameInfo.keyFrame +
-      " interlaced=" + d.frameInfo.interlaced + " tff=" + d.frameInfo.tff + " repeat=" + d.frameInfo.repeat);
+    L.push("## Timecode");
     L.push("");
-    L.push("[Video] " + v.w + "x" + v.h + " coded / " + v.dw + "x" + v.dh + " display  PAR " + fmt(v.par, 4) + "  DAR " + orDash(v.aspectName));
-    L.push("  pixfmt=" + orDash(v.pixelformat) + " range=" + orDash(v.colorlevels) + " matrix=" + orDash(v.colormatrix));
-    L.push("  primaries=" + orDash(v.primaries) + " transfer=" + orDash(v.gamma) + " sig-peak=" + orDash(v.sigPeak) + " rotate=" + orDash(v.rotate));
-    L.push("  codec=" + orDash(v.codec) + " decoder=" + orDash(v.decoder) + " hwdec=" + orDash(v.hwdec) + " bitrate=" + bitrate(v.bitrate));
+    L.push("- **TC:** " + ((d.time.dropFrame ? d.time.timecode : d.time.timecodeNDF) || "—") +
+      " — frame " + fmtInt(d.time.frame) + " / " + fmtInt(d.time.frameCount));
+    L.push("- **fps:** " + fmt(d.time.fps, 6) + " (" + orDash(d.time.fpsSource) + ") · " + (d.time.dropFrame ? "drop-frame" : "non-drop"));
+    L.push("- **Position:** " + clock(d.time.pos) + " / " + clock(d.time.duration));
     L.push("");
-    L.push("[Audio] " + orDash(a.codec) + "  " + orDash(a.sampleRate) + " Hz  " + orDash(a.channelCount) + "ch (" +
-      orDash(a.hrChannels || a.channels) + ")  " + orDash(a.format) + "  bitrate=" + bitrate(a.bitrate));
+    L.push("## Frame");
+    L.push("");
+    L.push("- type " + orDash(d.frameInfo.pictureType) + " · keyframe " + d.frameInfo.keyFrame +
+      " · interlaced " + d.frameInfo.interlaced + " · TFF " + d.frameInfo.tff + " · repeat " + d.frameInfo.repeat);
+    L.push("");
+    L.push("## Video");
+    L.push("");
+    L.push("- " + v.w + "×" + v.h + " coded / " + v.dw + "×" + v.dh + " display · PAR " + fmt(v.par, 4) + " · DAR " + orDash(v.aspectName));
+    L.push("- pixfmt " + orDash(v.pixelformat) + " · range " + orDash(v.colorlevels) + " · matrix " + orDash(v.colormatrix));
+    L.push("- primaries " + orDash(v.primaries) + " · transfer " + orDash(v.gamma) + " · sig-peak " + orDash(v.sigPeak) + " · rotate " + orDash(v.rotate));
+    L.push("- codec " + orDash(v.codec) + " · decoder " + orDash(v.decoder) + " · hwdec " + orDash(v.hwdec) + " · bitrate " + bitrate(v.bitrate));
+    L.push("");
+    L.push("## Audio");
+    L.push("");
+    L.push("- " + orDash(a.codec) + " · " + orDash(a.sampleRate) + " Hz · " + orDash(a.channelCount) + "ch (" +
+      orDash(a.hrChannels || a.channels) + ") · " + orDash(a.format) + " · bitrate " + bitrate(a.bitrate));
     if (r["lavfi.r128.I"] != null)
-      L.push("  R128: I=" + r["lavfi.r128.I"] + " LUFS  S=" + r["lavfi.r128.S"] + "  M=" + r["lavfi.r128.M"] + "  LRA=" + r["lavfi.r128.LRA"] + "  TP=" + orDash(r["lavfi.r128.true_peak"]));
+      L.push("- R128: I " + r["lavfi.r128.I"] + " LUFS · S " + r["lavfi.r128.S"] + " · M " + r["lavfi.r128.M"] + " · LRA " + r["lavfi.r128.LRA"] + " · TP " + orDash(r["lavfi.r128.true_peak"]));
     L.push("");
-    L.push("[Sync] avsync=" + fmt(pf.avsync * 1000, 1) + " ms  drop dec/out=" + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
-      "  mistimed=" + fmtInt(pf.mistimed) + "  delayed=" + fmtInt(pf.delayed));
-    L.push("  display=" + fmt(pf.displayFps, 3) + " Hz  est-vf-fps=" + fmt(pf.estVfFps, 3));
+    L.push("## Sync");
+    L.push("");
+    L.push("- avsync " + fmt(pf.avsync * 1000, 1) + " ms · drop dec/out " + fmtInt(pf.decDrop) + "/" + fmtInt(pf.voDrop) +
+      " · mistimed " + fmtInt(pf.mistimed) + " · delayed " + fmtInt(pf.delayed));
+    L.push("- display " + fmt(pf.displayFps, 3) + " Hz · est-vf-fps " + fmt(pf.estVfFps, 3));
     if (state.markers.list.length) {
       L.push("");
-      L.push("[QC markers] " + state.markers.list.length);
-      L.push(QCE.toReport(state.markers.list, state.markers.media));
+      L.push("## QC markers");
+      L.push("");
+      L.push(QCE.toReport(state.markers.list, state.markers.media, { embed: true }));
     }
     return L.join("\n");
   }
