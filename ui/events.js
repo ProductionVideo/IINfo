@@ -7,11 +7,12 @@
  * operations — manual markers are the first producer; audio / video / freeze /
  * A-B-difference analysers will feed create() with a different `source` later.
  *
- * main.js has a tiny standalone-capture helper (markHere) that must emit the
- * same shape create() does — keep them in step; test/events.test.js pins the
- * schema.
+ * main.js inlines the IIFE below verbatim (as `var qcevents`) and routes its
+ * marker capture (markHere) and Deep-QC finalisation (finalizeQC) through
+ * create() — one writer, one serialiser. test/events-inline.test.js guards the
+ * copy; test/events.test.js pins the schema.
  */
-(function (root) {
+var QCEvents = (function () {
   "use strict";
 
   var SOURCES = ["manual", "audio", "video", "decode", "sync", "compare", "signalstats", "freezedetect"];
@@ -217,6 +218,11 @@
     toCSV: toCSV, toReport: toReport,
   };
 
-  if (typeof module !== "undefined" && module.exports) module.exports = API;
-  else root.QCEvents = API;
-})(typeof self !== "undefined" ? self : this);
+  return API;
+})();
+
+// main.js inlines the IIFE above verbatim as `var qcevents = (function () {
+// … })();` (IINA's require() can't be trusted to return module.exports) —
+// test/events-inline.test.js drift-guards that copy.
+if (typeof module !== "undefined" && module.exports) module.exports = QCEvents;
+else if (typeof window !== "undefined") window.QCEvents = QCEvents;

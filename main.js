@@ -199,6 +199,219 @@ var iinfocfg = (function () {
 })();
 /* ---- end inlined ui/config.js ---- */
 
+/* ---- inlined ui/events.js — the QC event writer + serialiser ----
+ * One place builds and normalises a QC event shape; markHere and finalizeQC
+ * both go through qcevents.create(). test/events-inline.test.js guards it. */
+var qcevents = (function () {
+  "use strict";
+
+  var SOURCES = ["manual", "audio", "video", "decode", "sync", "compare", "signalstats", "freezedetect"];
+  var CATEGORIES = ["Video", "Audio", "Sync", "Colour", "Performance", "Content", "Other"];
+  var SEVERITIES = ["info", "warning", "error"];
+
+  var EDITABLE = ["note", "category", "severity", "durMs", "type"];
+
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function str(v) { return v == null ? "" : String(v); }
+
+  function idFor() {
+    return "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+  }
+
+  function pickCategory(v) {
+    return CATEGORIES.indexOf(v) >= 0 ? v : "Other";
+  }
+  function pickSeverity(v) {
+    return SEVERITIES.indexOf(v) >= 0 ? v : "warning";
+  }
+
+  // build a normalized event. `raw` may be a capture context (create) or a
+  // persisted record (deserialize) — existing id / ts / resolved are kept.
+  function norm(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    var tMs = raw.tMs;
+    if (!isNum(tMs) && isNum(raw.frame) && isNum(raw.fps) && raw.fps > 0) tMs = (raw.frame + 0.5) / raw.fps * 1000;
+    if (!isNum(tMs)) return null;
+    tMs = Math.max(0, Math.round(tMs));
+
+    var meta = (raw.meta && typeof raw.meta === "object") ? shallow(raw.meta) : {};
+    if (raw.abActive != null) meta.abActive = !!raw.abActive;
+    if (raw.aId != null) meta.aId = String(raw.aId);
+    if (raw.bId != null) meta.bId = String(raw.bId);
+
+    return {
+      id: raw.id ? String(raw.id) : idFor(),
+      source: SOURCES.indexOf(raw.source) >= 0 ? raw.source : (raw.source ? String(raw.source) : "manual"),
+      type: raw.type ? String(raw.type) : "marker",
+      tMs: tMs,
+      frame: isNum(raw.frame) ? Math.round(raw.frame) : null,
+      fps: isNum(raw.fps) && raw.fps > 0 ? raw.fps : null,
+      tc: raw.tc ? String(raw.tc) : null,
+      durMs: isNum(raw.durMs) && raw.durMs >= 0 ? Math.round(raw.durMs) : null,
+      category: pickCategory(raw.category),
+      severity: pickSeverity(raw.severity),
+      note: str(raw.note),
+      resolved: !!raw.resolved,
+      ts: isNum(raw.ts) ? raw.ts : Date.now(),
+      ref: raw.ref != null ? raw.ref : null,
+      meta: meta,
+    };
+  }
+
+  function shallow(o) {
+    var r = {};
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) r[k] = o[k];
+    return r;
+  }
+
+  function create(ctx) { return norm(ctx || {}); }
+
+  function update(ev, patch) {
+    var next = shallow(ev);
+    next.meta = shallow(ev.meta || {});
+    patch = patch || {};
+    EDITABLE.forEach(function (k) {
+      if (!(k in patch)) return;
+      if (k === "category") next.category = pickCategory(patch.category);
+      else if (k === "severity") next.severity = pickSeverity(patch.severity);
+      else if (k === "durMs") next.durMs = isNum(patch.durMs) && patch.durMs >= 0 ? Math.round(patch.durMs) : null;
+      else if (k === "type") next.type = patch.type ? String(patch.type) : "marker";
+      else if (k === "note") next.note = str(patch.note);
+    });
+    return next;
+  }
+
+  function withResolved(ev, b) {
+    var next = shallow(ev);
+    next.meta = shallow(ev.meta || {});
+    next.resolved = !!b;
+    return next;
+  }
+
+  function sort(list) {
+    return (list || []).slice().sort(function (a, b) {
+      return (a.tMs - b.tMs) || ((a.ts || 0) - (b.ts || 0));
+    });
+  }
+
+  function matches(ev, q) {
+    if (!q) return true;
+    if (q.source != null && ev.source !== q.source) return false;
+    if (q.auto != null && (ev.source !== "manual") !== !!q.auto) return false;
+    if (q.category != null && ev.category !== q.category) return false;
+    if (q.severity != null && ev.severity !== q.severity) return false;
+    if (q.resolved != null && !!ev.resolved !== !!q.resolved) return false;
+    if (q.text) {
+      var hay = (ev.note + " " + ev.category + " " + (ev.tc || "")).toLowerCase();
+      if (hay.indexOf(String(q.text).toLowerCase()) < 0) return false;
+    }
+    return true;
+  }
+
+  function filter(list, q) {
+    return (list || []).filter(function (ev) { return matches(ev, q); });
+  }
+
+  function prev(list, tMs, q) {
+    var best = null;
+    (list || []).forEach(function (ev) {
+      if (ev.tMs >= tMs || !matches(ev, q)) return;
+      if (!best || ev.tMs > best.tMs || (ev.tMs === best.tMs && (ev.ts || 0) > (best.ts || 0))) best = ev;
+    });
+    return best;
+  }
+
+  function next(list, tMs, q) {
+    var best = null;
+    (list || []).forEach(function (ev) {
+      if (ev.tMs <= tMs || !matches(ev, q)) return;
+      if (!best || ev.tMs < best.tMs || (ev.tMs === best.tMs && (ev.ts || 0) < (best.ts || 0))) best = ev;
+    });
+    return best;
+  }
+
+  function serialize(list, media) {
+    return JSON.stringify({
+      iinfo: "qc-markers",
+      version: 1,
+      media: media || null,
+      saved: new Date().toISOString(),
+      events: sort(list).map(norm).filter(Boolean),
+    }, null, 2);
+  }
+
+  function deserialize(strIn) {
+    var o;
+    try { o = JSON.parse(strIn); } catch (e) { return null; }
+    if (Array.isArray(o)) return { media: null, events: o.map(norm).filter(Boolean) };
+    if (!o || typeof o !== "object" || !Array.isArray(o.events)) return null;
+    return { media: o.media || null, events: o.events.map(norm).filter(Boolean) };
+  }
+
+  var CSV_COLS = ["id", "source", "type", "tc", "frame", "tMs", "durMs", "category", "severity", "resolved", "note"];
+  function csvCell(v) {
+    var s = v == null ? "" : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function toCSV(list) {
+    var rows = [CSV_COLS.join(",")];
+    sort(list).forEach(function (ev) {
+      rows.push(CSV_COLS.map(function (c) { return csvCell(ev[c]); }).join(","));
+    });
+    return rows.join("\r\n");
+  }
+
+  function mdCell(v) {
+    return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  }
+  // Markdown. opts.embed -> drop the h1 + media/date preamble (for the bigger report).
+  function toReport(list, media, opts) {
+    opts = opts || {};
+    var s = sort(list);
+    var unresolved = s.filter(function (e) { return !e.resolved; }).length;
+    var L = [];
+    if (!opts.embed) {
+      L.push("# IINfo QC markers");
+      L.push("");
+      L.push("- **Media:** " + (media && (media.path || media.filename) ? "`" + (media.path || media.filename) + "`" : "—"));
+      L.push("- **Generated:** " + new Date().toISOString());
+      L.push("");
+    }
+    L.push("**" + s.length + " marker" + (s.length === 1 ? "" : "s") + " · " + unresolved + " unresolved**");
+    L.push("");
+    if (!s.length) { L.push("_No markers._"); return L.join("\n"); }
+    L.push("| # | Severity | Timecode | Frame | Category | Source | Dur | Status | Note |");
+    L.push("|--:|----------|----------|------:|----------|--------|-----|--------|------|");
+    s.forEach(function (ev, i) {
+      L.push("| " + [
+        i + 1,
+        ev.severity.toUpperCase(),
+        "`" + (ev.tc || (ev.tMs / 1000).toFixed(3) + "s") + "`",
+        ev.frame != null ? "#" + ev.frame : "—",
+        ev.category,
+        ev.source !== "manual" ? ev.source : "manual",
+        ev.durMs ? (ev.durMs / 1000).toFixed(2) + "s" : "—",
+        ev.resolved ? "✓ resolved" : "open",
+        ev.note ? mdCell(ev.note) : "—",
+      ].join(" | ") + " |");
+    });
+    return L.join("\n");
+  }
+
+  var API = {
+    SOURCES: SOURCES, CATEGORIES: CATEGORIES, SEVERITIES: SEVERITIES,
+    idFor: idFor,
+    create: create, update: update, withResolved: withResolved,
+    sort: sort, filter: filter, prev: prev, next: next,
+    serialize: serialize, deserialize: deserialize,
+    toCSV: toCSV, toReport: toReport,
+  };
+
+  return API;
+})();
+/* ---- end inlined ui/events.js ---- */
+
 let wantWindow = false;    // user intent: opened via toggle and not yet closed. NOT tied to focus.
 let afActive = false;      // is our audio filter currently in the chain?
 let afWanted = false;      // does the webview want metering right now?
@@ -774,24 +987,25 @@ function stopQC() {
 
 function qcDedupKey(e) { return e.source + "|" + e.type + "|" + Math.round(e.tMs / 500); }
 
+// Turn a partial auto event from deepqc.analyze() into a full QC event. The mpv
+// reads (fps / frame / tc) happen here; the shape + normalisation is the single
+// writer, qcevents.create() — identical to the web view's QCEvents.create().
 function finalizeQC(raw) {
   const fps = num("container-fps") || num("estimated-vf-fps") || raw.fps || null;
   const frame = fps ? Math.round((raw.tMs / 1000) * fps) : null;
   const tc = frame != null && fps ? framesToTimecode(frame, fps) : null;
-  return {
-    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+  return qcevents.create({
     source: raw.source, type: raw.type,
-    tMs: Math.max(0, Math.round(raw.tMs)),
+    tMs: raw.tMs,
     frame: frame,
-    fps: fps || null,
+    fps: fps,
     tc: tc && tc.indexOf("-") < 0 ? tc : null,
-    durMs: (typeof raw.durMs === "number" && raw.durMs >= 0) ? Math.round(raw.durMs) : null,
+    durMs: raw.durMs,
     category: raw.category || "Video",
     severity: raw.severity || "warning",
     note: raw.note || "",
-    resolved: false, ts: Date.now(), ref: null,
     meta: Object.assign({ auto: true }, raw.meta || {}),
-  };
+  });
 }
 
 // buffer a partial auto event, de-duplicating against qcList and the buffer;
@@ -926,14 +1140,9 @@ function markerFile(id) {
   return dataMarkerFile(id);
 }
 
+// one serialiser — same envelope + normalisation the web view writes
 function serializeMarkers() {
-  const events = qcList.slice().sort((a, b) => (a.tMs - b.tMs) || ((a.ts || 0) - (b.ts || 0)));
-  return JSON.stringify({
-    iinfo: "qc-markers", version: 1,
-    media: qcMedia || null,
-    saved: new Date().toISOString(),
-    events: events,
-  }, null, 2);
+  return qcevents.serialize(qcList, qcMedia || null);
 }
 
 function loadMarkers() {
@@ -996,7 +1205,7 @@ function flushMarkers() {
 }
 
 // ⌥⇧M — capture a marker at the current frame even with the inspector closed.
-// Emits the same shape ui/events.js create() does; the web view does the rest.
+// Goes through the same writer (qcevents.create) as every other QC event.
 function markHere() {
   if (!alive) return;
   const t = num("time-pos");
@@ -1007,17 +1216,17 @@ function markHere() {
   const tc = framesToTimecode(frame, fps);
   const cmp = lastCompare && lastCompare.state;
   const paired = !!(cmp && cmp.aId && cmp.bId);
-  const ev = {
-    id: "qc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+  const ev = qcevents.create({
     source: "manual", type: "marker",
-    tMs: Math.max(0, Math.round(t * 1000)),
-    frame: frame != null ? Math.round(frame) : null,
-    fps: fps || null,
+    tMs: Math.round(t * 1000),
+    frame: frame,
+    fps: fps,
     tc: tc && tc.indexOf("-") < 0 ? tc : null,
-    durMs: null, category: "Other", severity: "warning", note: "",
-    resolved: false, ts: Date.now(), ref: null,
-    meta: paired ? { abActive: !!cmp.linked, aId: String(cmp.aId), bId: String(cmp.bId) } : {},
-  };
+    category: "Other", severity: "warning", note: "",
+    abActive: paired ? !!cmp.linked : undefined,
+    aId: paired ? cmp.aId : undefined,
+    bId: paired ? cmp.bId : undefined,
+  });
   if (!qcMedia) qcMedia = qcIdentity();
   qcList = qcList.concat([ev]);
   qcGen++;
