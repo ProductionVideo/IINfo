@@ -750,6 +750,17 @@ on("iina.file-loaded", () => {
 on("mpv.audio-params.changed", () => {
   const sig = JSON.stringify(native("audio-params") || {});
   if (sig !== lastAudioSig) { lastAudioSig = sig; fileGen++; }
+  if (G) gHello();   // audio format may only now be known — refresh the A/B tech snapshot
+});
+// video-params often aren't ready at file-loaded; re-hello once they settle so the
+// A/B technical-diff panel gets the real codec / pixfmt / colour data
+let lastTechSig = "";
+on("mpv.video-params.changed", () => {
+  if (!G || !alive) return;
+  const sig = JSON.stringify(native("video-params") || {}) + "|" + str("video-codec");
+  if (sig === lastTechSig) return;
+  lastTechSig = sig;
+  gHello();
 });
 on("mpv.end-file", () => { freshGen = -1; });
 on("mpv.shutdown", () => { try { flushMarkersNow(); } catch (e) {} });
@@ -766,11 +777,38 @@ let lastCompare = null;
 function gMeta() {
   const fps = num("container-fps") || num("estimated-vf-fps");
   const vp = native("video-params") || {};
+  const ap = native("audio-params") || {};
+  const vct = native("current-tracks/video");
   return {
     path: str("path"), filename: str("filename"),
     w: vp.w || null, h: vp.h || null,
     fps: fps, duration: num("duration"),
     pos: num("time-pos"), frame: num("estimated-frame-number"), paused: flag("pause"),
+    // per-file technical metadata for the A/B technical-diff panel
+    tech: {
+      container: str("file-format"),
+      vcodec: str("video-codec"),
+      vdecoder: vct ? (vct["decoder-desc"] || vct.codec) : null,
+      w: vp.w || null, h: vp.h || null, dw: vp.dw || null, dh: vp.dh || null,
+      par: vp.par != null ? vp.par : null,
+      dar: vp["aspect-name"] || (vp.aspect != null ? vp.aspect : null),
+      pixfmt: vp.pixelformat || null,
+      range: vp.colorlevels || null,
+      matrix: vp.colormatrix || null,
+      primaries: vp.primaries || null,
+      transfer: vp.gamma || null,
+      sigPeak: vp["sig-peak"] != null ? vp["sig-peak"] : null,
+      fps: fps,
+      duration: num("duration"),
+      frameCount: num("estimated-frame-count"),
+      vbitrate: num("video-bitrate"),
+      acodec: str("audio-codec-name") || str("audio-codec"),
+      asr: ap["samplerate"] || num("audio-params/samplerate"),
+      ach: ap["channel-count"] || num("audio-params/channel-count"),
+      alayout: ap["hr-channels"] || ap["channels"] || null,
+      afmt: ap["format"] || null,
+      abitrate: num("audio-bitrate"),
+    },
   };
 }
 function gSend(name, data) { if (!G) return; try { G.postMessage(name, data); } catch (e) {} }

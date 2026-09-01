@@ -128,6 +128,7 @@ var PINS = [];
         id: id, path: p.path || null, filename: p.filename || null,
         w: p.w || null, h: p.h || null, fps: p.fps || null,
         duration: p.duration || null, pos: p.pos != null ? p.pos : null, paused: !!p.paused,
+        tech: p.tech || null,
       };
     });
   }
