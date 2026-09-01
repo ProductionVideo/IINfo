@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0
+
+**A/B Visual Compare — overlay two frames and actually see the difference.**
+
+With A and B assigned, tick **Visual compare** in the A/B Compare panel. An
+overlay opens on **window A** with the two aligned frames composited:
+
+- **Difference** — `|A − B|` per pixel (identical = black, changes light up),
+  with a gain slider to amplify faint differences.
+- **Flicker** — the blink-comparator: alternate A / B at 1–12 Hz. Anything that
+  moved jumps; static content is rock steady.
+- **Wipe** — a draggable split, A one side, B the other, pixel-aligned.
+- **Onion** — A and B blended at an adjustable opacity.
+- Plus plain **A** / **B**.
+
+It's a *paused* tool — it re-grabs both frames on every ganged step / seek (and
+enabling it auto-links transport). Keyboard `1`–`6` for modes, `[` `]` for the
+slider, `r` to re-grab, `Esc` to exit. Different resolutions disable Difference
+(a resample can't be pixel-diffed) but the other modes still work.
+
+Frames come from `screenshot-to-file` composited in a canvas — no video
+compositing, no extra permission. Internals: `ui/vcompare.*`, `ui/vcfit.js` +
+`test/vcfit.test.js`; see `DECISIONS.md`.
+
 ## 0.4.0
 
 **A/B Technical Diff — is B actually the same encode as A?**
