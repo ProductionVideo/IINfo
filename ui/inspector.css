@@ -367,6 +367,24 @@ body.stale .essentials, body.stale main { opacity: .45; }
 body.ganged .controls .seg-group,
 body.ganged .jump input { border-color: var(--accent); }
 
+/* ================= A/B technical diff ================= */
+.tag.diff { color: var(--warn); }
+.tag.ok { color: var(--good); }
+.abtable { display: flex; flex-direction: column; }
+.abrow {
+  display: grid; grid-template-columns: 8.5em 1fr 1fr; gap: 8px;
+  padding: 4px 6px; border-top: 1px solid var(--border); font-size: 12px;
+}
+.abrow:first-child { border-top: 0; }
+.abrow.abhead { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.abrow .ab-l { color: var(--dim); }
+.abrow .ab-a, .abrow .ab-b { color: var(--text); overflow-wrap: anywhere; }
+.abrow.diff { box-shadow: inset 2px 0 0 var(--warn); border-radius: 2px; }
+.abrow.diff .ab-b { color: var(--warn); }
+.abrow.approx.diff { box-shadow: inset 2px 0 0 var(--faint); }
+.abrow.approx.diff .ab-b { color: var(--dim); }
+.ab-arrow { color: var(--faint); }
+
 /* ================= QC markers panel ================= */
 .qc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .qc-filter { flex: 0 1 120px; height: 26px; }
