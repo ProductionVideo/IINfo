@@ -1067,135 +1067,10 @@
     };
   })();
 
-  // -- Deep QC — automated defect detection --------------------------------
-  P.deepqc = (function () {
-    var p = el("div", "panel");
-    var h = el("h2");
-    h.appendChild(el("span", null, "Deep QC"));
-    var badge = el("span", "tag");
-    h.appendChild(badge);
-    p.appendChild(h);
-    var body = el("div", "body");
-
-    function dq() {
-      if (!state.settings.deepqc) state.settings.deepqc = CFG.deepqcDefault();
-      return state.settings.deepqc;
-    }
-    function set(patch) { state.settings.deepqc = Object.assign({}, dq(), patch); pushConfig(); render(); }
-
-    // analysis is a deliberate, user-started pass — never armed just because this
-    // panel is open, and never resumed on its own after a file change or restart
-    var running = false;
-    var runRow = el("div", "qc-bar");
-    var runBtn = el("button", "btn xs deepqc-run", "▶ Start analysis");
-    runBtn.addEventListener("click", function () {
-      try { iina.postMessage("iinfo-deepqc", { op: running ? "stop" : "start" }); } catch (e) {}
-    });
-    runRow.appendChild(runBtn);
-    body.appendChild(runRow);
-
-    var PERF_NOTE = "Analyses every decoded frame with FFmpeg's own filters — expect reduced hardware-decode performance and dropped frames while it runs. Play through the section you want checked, then Stop.";
-    var perfNote = el("div", "hint", PERF_NOTE);
-    perfNote.style.textAlign = "left";
-    body.appendChild(perfNote);
-
-    var checks = el("div", "deepqc-checks");
-    var checkBoxes = {};
-    [["freeze", "Freeze / held frames"], ["black", "Black frames"], ["outliers", "Temporal outliers + line repeats"]]
-      .forEach(function (o) {
-        var lab = el("label", "deepqc-check");
-        var cb = el("input"); cb.type = "checkbox";
-        cb.addEventListener("change", function () { var q = {}; q[o[0]] = cb.checked; set(q); });
-        lab.appendChild(cb); lab.appendChild(el("span", null, o[1]));
-        checkBoxes[o[0]] = cb; checks.appendChild(lab);
-      });
-    body.appendChild(checks);
-
-    var opts = el("div", "scope-opts");
-    function segRow(label, pairs, key) {
-      var row = el("div", "scope-row");
-      row.appendChild(el("span", "scope-lbl", label));
-      var btns = {};
-      pairs.forEach(function (o) {
-        var b = el("button", "btn xs", o[1]);
-        b.addEventListener("click", function () { var q = {}; q[key] = o[0]; set(q); });
-        btns[o[0]] = b; row.appendChild(b);
-      });
-      opts.appendChild(row);
-      return { row: row, btns: btns };
-    }
-    var rangeSeg = segRow("Broadcast range", [["limited", "Limited"], ["full", "Full"], ["off", "Off"]], "range");
-    var freezeSeg = segRow("Freeze ≥", [[1, "1s"], [2, "2s"], [4, "4s"], [8, "8s"]], "freezeDur");
-    var blackSeg = segRow("Black ≥", [[0.2, "0.2s"], [0.5, "0.5s"], [1, "1s"]], "blackDur");
-    body.appendChild(opts);
-
-    var readout = el("div", "deepqc-read", "—");
-    body.appendChild(readout);
-
-    var actions = el("div", "qc-bar");
-    var bClear = el("button", "btn xs", "Clear automatic events");
-    bClear.addEventListener("click", function () {
-      state.markers.list = state.markers.list.filter(function (e) { return e.source === "manual"; });
-      if (typeof pushMarkers === "function") pushMarkers(true);
-      if (typeof mkRefresh === "function") mkRefresh();
-      render();
-    });
-    actions.appendChild(bClear);
-    body.appendChild(actions);
-
-    var note = el("div", "hint bad");
-    note.style.textAlign = "left";
-    note.hidden = true;
-    body.appendChild(note);
-    p.appendChild(body);
-
-    function fmtY(v) { return v == null ? "–" : String(Math.round(v)); }
-    function render() {
-      var c = dq();
-      Object.keys(checkBoxes).forEach(function (k) { checkBoxes[k].checked = c[k] !== false; });
-      Object.keys(rangeSeg.btns).forEach(function (k) { rangeSeg.btns[k].classList.toggle("on", k === (c.range || "limited")); });
-      Object.keys(freezeSeg.btns).forEach(function (k) { freezeSeg.btns[k].classList.toggle("on", Number(k) === (c.freezeDur || 2)); });
-      Object.keys(blackSeg.btns).forEach(function (k) { blackSeg.btns[k].classList.toggle("on", Number(k) === (c.blackDur || 0.5)); });
-      freezeSeg.row.hidden = c.freeze === false;
-      var autoN = 0;
-      for (var i = 0; i < state.markers.list.length; i++) if (state.markers.list[i].source !== "manual") autoN++;
-      bClear.disabled = autoN === 0;
-    }
-
-    return {
-      key: "deepqc", title: "Deep QC", def: false, el: p, _render: render,
-      update: function (d) {
-        render();
-        var q = d.deepqc || {};
-        running = !!q.running;
-        runBtn.textContent = running ? "■ Stop analysis" : "▶ Start analysis";
-        runBtn.classList.toggle("on", running);
-        if (q.error) {
-          badge.textContent = "filter error"; badge.className = "tag diff";
-          note.textContent = "Analysis filter failed: " + q.error; note.hidden = false;
-        } else {
-          note.hidden = true;
-          badge.textContent = q.session ? (q.session + " found") : (running ? (q.active ? "analysing…" : "starting…") : "idle");
-          badge.className = "tag" + (running && q.active ? " ok" : "");
-        }
-        var s = q.stats;
-        if (s) {
-          var bits = ["Y " + fmtY(s.yMin) + "–" + fmtY(s.yMax)];
-          if (s.yAvg != null) bits.push("avg " + fmtY(s.yAvg));
-          if (s.brng != null) bits.push("BRNG " + (s.brng * 100).toFixed(1) + "%");
-          if (s.tout != null) bits.push("TOUT " + s.tout.toFixed(3));
-          readout.textContent = bits.join("  ·  ");
-        } else {
-          readout.textContent = running ? "waiting for frames…" : "not running";
-        }
-      },
-    };
-  })();
-
   // canonical panel-key list AND the default order (reading order: core video
   // readouts → the two workflow panels → the audio cluster). The user's own
   // order lives in state.panelOrder; order-agnostic loops still iterate this.
-  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "deepqc", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
+  var ORDER = ["timecode", "frame", "signal", "scope", "codec", "sync", "compare", "abtech", "markers", "waveform", "levels", "loudness", "audiofmt"];
 
   /* ---- display settings (persisted with the panel config) ---- */
   var THEMES = [
@@ -1466,9 +1341,7 @@
     dr.appendChild(tabRow);
 
     /* Panels — visibility + order */
-    var ord = panelOrder().filter(function (kk) {
-      return kk !== "deepqc" || state.settings.experimental;   // Deep QC is experimental for now
-    });
+    var ord = panelOrder();
     ord.forEach(function (kk, idx) {
       var row = el("div", "panel-order-row");
       var lab = el("label", "por-label");
@@ -1520,7 +1393,6 @@
     var xpcb = el("input"); xpcb.type = "checkbox"; xpcb.checked = !!state.settings.experimental;
     xpcb.addEventListener("change", function () {
       state.settings.experimental = xpcb.checked;
-      if (!xpcb.checked && state.panels.deepqc) state.panels.deepqc = false;
       applyVisibility(); buildDrawer();
       pushConfig();
       if (state.data) applyData();   // reveal / hide experimental controls
@@ -1529,7 +1401,7 @@
     xpRow.appendChild(el("span", "set-label", "Experimental features"));
     ab.appendChild(xpRow);
 
-    ab.appendChild(el("div", "drawer-note", "Experimental: Deep QC (automated defect detection — a heavy per-frame analysis pass) and A/B Visual Compare (flicker / wipe / difference overlay). Both are usable but costly on performance. † font falls back to a system monospace unless installed."));
+    ab.appendChild(el("div", "drawer-note", "Experimental: A/B Visual Compare (flicker / wipe / difference overlay) — usable but costly on performance. † font falls back to a system monospace unless installed."));
 
     /* Storage */
     var sb = body.storage;
@@ -1572,8 +1444,8 @@
     });
   }
   function applyConfig(cfg) {
-    // ONE validator — ui/config.js. It accepts any prior stored shape (or null),
-    // clamps every field and forces panels.deepqc off unless experimental is on.
+    // ONE validator — ui/config.js. It accepts any prior stored shape (or
+    // null) and clamps every field.
     var norm = CFG.normalize(cfg);
     ORDER.forEach(function (kk) { state.panels[kk] = norm.panels[kk]; });
     state.panelOrder = norm.panelOrder;

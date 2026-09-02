@@ -15,7 +15,6 @@ const H = require("./_harness");
 
 const CHECKS = [
   require("./markers.check.js"),
-  require("./deepqc.check.js"),
   require("./scope.check.js"),
   require("./compare.check.js"),
   require("./vcompare.check.js"),
