@@ -6,6 +6,30 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Deep QC removed for 1.0
+
+Deep QC (the `@iinfoqc` automated-defect scan added in v0.7.0) is **removed from
+the 1.0 release** — `lib/deepqc.js`, the inlined bridge in `main.js`, the
+`P.deepqc` panel, the `iinfo-deepqc` message path, the `deepqc` config keys and
+its tests are all gone.
+
+Why: live testing showed two blocking problems the feature couldn't ship with —
+Deep QC + a video scope together was pathologically expensive, and the analysis
+filter produced no metadata under hardware decode (so the pass silently did
+nothing and its Start control looked unresponsive). Fixing those properly is a
+correctness milestone in its own right, and 1.0 shouldn't wait on it or carry a
+broken experimental surface. The work-in-progress fixes live on the
+`milestone-2a-deepqc-correctness` branch for when development resumes.
+
+What stays: the generic QC event model still accepts any `source` (including
+`signalstats` / `freezedetect`), so automatic markers saved by an earlier build
+still load and display on the QC Markers timeline. The `experimental` setting
+stays (A/B Visual Compare still uses it).
+
+The v0.7.0 rationale below is kept as history.
+
+---
+
 ## Configuration & event-schema consolidation (Milestone 1)
 
 ### One config module — `ui/config.js` — inlined into main.js like the others
@@ -70,7 +94,7 @@ invoke them.
 
 ---
 
-## Deep QC (v0.7.0)
+## Deep QC (v0.7.0) — removed in 1.0, see above; kept as history
 
 ### Analysis-only lavfi filter, armed only by an explicit start — never by config
 

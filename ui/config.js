@@ -11,10 +11,9 @@
  *     verbatim (IINA's require() can't be trusted to return module.exports),
  *     guarded by test/config-inline.test.js
  *
- * Before this module the scope + Deep-QC defaults were copied into seven places
- * and validated by two different code paths that had already drifted apart
- * (main.js normalizeDeep carried brng/tout/vrep; the web view's applyConfig did
- * not). Add a setting HERE and nowhere else.
+ * Before this module the panel + scope defaults were copied into seven places
+ * and validated by two different code paths that had drifted apart. Add a
+ * setting HERE and nowhere else.
  *
  * Window geometry is deliberately NOT part of this blob — it is per-window state
  * and lives under its own preferences key (see DECISIONS "Configuration
@@ -26,11 +25,11 @@ var IINfoConfig = (function () {
   // canonical panel keys + default visibility. MUST stay in step with
   // ui/inspector.js `P.<key>.def` — test/config-schema.test.js diffs the two.
   var PANEL_KEYS = ["timecode", "frame", "signal", "scope", "codec", "sync",
-                    "deepqc", "compare", "abtech", "markers", "waveform",
+                    "compare", "abtech", "markers", "waveform",
                     "levels", "loudness", "audiofmt"];
   var PANEL_DEF = {
     timecode: true, frame: false, signal: true, scope: false, codec: false,
-    sync: false, deepqc: false, compare: false, abtech: false, markers: false,
+    sync: false, compare: false, abtech: false, markers: false,
     waveform: true, levels: true, loudness: false, audiofmt: false,
   };
 
@@ -44,7 +43,6 @@ var IINfoConfig = (function () {
   var SCOPE_LAYOUTS = ["overlay", "bottom", "right"];
   var SCOPE_SIZES = ["s", "m", "l", "xl", "xxl"];
   var SCOPE_CORNERS = ["tl", "tr", "bl", "br"];
-  var SCOPE_RANGE = ["limited", "full", "off"];
 
   function isNum(v) { return typeof v === "number" && isFinite(v); }
   function num(v, d) { return isNum(v) ? v : d; }
@@ -57,16 +55,12 @@ var IINfoConfig = (function () {
   function scopeDefault() {
     return { type: "off", layout: "overlay", size: "l", corner: "tr", bright: 0.18, opacity: 1 };
   }
-  function deepqcDefault() {
-    return { freeze: true, black: true, outliers: true, range: "limited",
-             brng: 0.05, tout: 0.05, vrep: 0.5, freezeDur: 2, blackDur: 0.5 };
-  }
   function settingsDefault() {
     return {
       theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15",
       markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false,
       experimental: false,
-      scope: scopeDefault(), deepqc: deepqcDefault(),
+      scope: scopeDefault(),
     };
   }
   function defaults() {
@@ -94,20 +88,6 @@ var IINfoConfig = (function () {
     };
   }
 
-  function normalizeDeepqc(s) {
-    s = (s && typeof s === "object") ? s : {};
-    return {
-      freeze: bool(s.freeze, true),
-      black: bool(s.black, true),
-      outliers: bool(s.outliers, true),
-      range: pick(s.range, SCOPE_RANGE, "limited"),
-      brng: num(s.brng, 0.05),
-      tout: num(s.tout, 0.05),
-      vrep: num(s.vrep, 0.5),
-      freezeDur: num(s.freezeDur, 2),
-      blackDur: num(s.blackDur, 0.5),
-    };
-  }
 
   function normalizeSettings(s) {
     s = (s && typeof s === "object") ? s : {};
@@ -120,7 +100,6 @@ var IINfoConfig = (function () {
       abtechDiffOnly: bool(s.abtechDiffOnly, false),
       experimental: bool(s.experimental, false),
       scope: normalizeScope(s.scope),
-      deepqc: normalizeDeepqc(s.deepqc),
     };
   }
 
@@ -155,8 +134,6 @@ var IINfoConfig = (function () {
       wave: { mono: bool(raw.wave && raw.wave.mono, false) },
       settings: normalizeSettings(raw.settings),
     };
-    // Deep QC is experimental — the panel can't be visible unless the flag is on
-    if (!cfg.settings.experimental) cfg.panels.deepqc = false;
     return cfg;
   }
 
@@ -176,9 +153,8 @@ var IINfoConfig = (function () {
     SCOPE_TYPES: SCOPE_TYPES, SCOPE_LAYOUTS: SCOPE_LAYOUTS, SCOPE_SIZES: SCOPE_SIZES,
     SCOPE_CORNERS: SCOPE_CORNERS,
     DEFAULT_MONO: DEFAULT_MONO,
-    defaults: defaults, scopeDefault: scopeDefault, deepqcDefault: deepqcDefault,
-    settingsDefault: settingsDefault,
-    normalize: normalize, normalizeScope: normalizeScope, normalizeDeepqc: normalizeDeepqc,
+    defaults: defaults, scopeDefault: scopeDefault, settingsDefault: settingsDefault,
+    normalize: normalize, normalizeScope: normalizeScope,
     normalizeSettings: normalizeSettings, normalizePanels: normalizePanels,
     normalizeOrder: normalizeOrder,
     legacyWin: legacyWin,

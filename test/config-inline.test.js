@@ -24,7 +24,6 @@ test("inlined config constants match ui/config.js", () => {
 test("inlined config.defaults() matches ui/config.js", () => {
   assert.deepEqual(inlined.defaults(), C.defaults());
   assert.deepEqual(inlined.scopeDefault(), C.scopeDefault());
-  assert.deepEqual(inlined.deepqcDefault(), C.deepqcDefault());
   assert.deepEqual(inlined.settingsDefault(), C.settingsDefault());
 });
 
@@ -32,8 +31,7 @@ test("inlined config.normalize() matches ui/config.js over many shapes", () => {
   const cases = [
     null, undefined, {}, "junk", 7,
     { settings: { theme: "amber", scope: { type: "parade", layout: "right", size: "xxl" } } },
-    { settings: { experimental: true }, panels: { deepqc: true, markers: true } },
-    { settings: { deepqc: { range: "full", brng: 0.02, tout: 0.09, vrep: 0.3 } } },
+    { settings: { experimental: true }, panels: { markers: true } },
     { settings: { theme: "nope", textSize: "big", scope: { bright: 99, opacity: -1 } } },
     { panelOrder: ["markers", "ghost", "timecode", "markers"] },
     { win: { x: 10, y: 20, w: 900, h: 700 } },
@@ -44,9 +42,7 @@ test("inlined config.normalize() matches ui/config.js over many shapes", () => {
   });
 });
 
-test("inlined normalizeScope / normalizeDeepqc match ui/config.js", () => {
+test("inlined normalizeScope matches ui/config.js", () => {
   assert.deepEqual(inlined.normalizeScope({ type: "vectorscope", corner: "bad" }),
     C.normalizeScope({ type: "vectorscope", corner: "bad" }));
-  assert.deepEqual(inlined.normalizeDeepqc({ freeze: false, blackDur: 3, brng: 0.01 }),
-    C.normalizeDeepqc({ freeze: false, blackDur: 3, brng: 0.01 }));
 });

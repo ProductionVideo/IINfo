@@ -1,25 +1,34 @@
 # Changelog
 
-## Unreleased — Milestone 1: config & event-schema consolidation
+## 1.0.0 — first stable release
 
-Internal only; no behaviour change intended.
+The feature set has been stable and in daily use for a while; 1.0 draws the
+line and hardens the internals.
 
-- **One configuration module.** `ui/config.js` now owns every persisted
-  setting, its default and its validation. The scope / Deep-QC / panel defaults
-  are no longer copied across `main.js` and `inspector.js`, and the two
-  validators that had drifted (one carried the BRNG/TOUT/VREP thresholds, the
-  other dropped them) are gone. main.js inlines the module the same way it
-  inlines the sync and Deep-QC logic, drift-guarded by a test.
-- **One QC event writer.** Manual markers and Deep-QC events are both built and
-  serialised through `ui/events.js` now — `main.js` no longer hand-rolls the
-  event shape or the marker-file envelope.
+**Deep QC removed.** The experimental automated-defect scan is gone from this
+release while its correctness and performance are worked out separately. Its
+detectors, panel and menu path are removed; any automatic markers you already
+saved still load and display on the QC Markers timeline as before. It will
+return in a later release.
+
+**Internals hardened (no behaviour change):**
+
+- **One configuration module.** `ui/config.js` owns every persisted setting,
+  its default and its validation — no more copies drifting between `main.js`
+  and the web view. `main.js` inlines it with a drift-guard test.
+- **One QC event writer.** Every marker is built and serialised through
+  `ui/events.js`; `main.js` no longer hand-rolls the event shape or the
+  marker-file envelope.
 - **Per-window inspector geometry.** Window size/position moved out of the
-  shared preference blob into their own key, keyed per player. Two inspectors
-  open at once (A/B) no longer overwrite each other's frame or bounce position
+  shared preference blob into their own per-player key — two inspectors open at
+  once (the A/B case) no longer overwrite each other's frame or bounce position
   between launches. Existing geometry is migrated automatically.
-- **UI regression checks in the repo.** `npm run check:ui` runs five headless
-  web-view checks (markers, Deep QC, scopes, A/B compare, visual compare).
-  Chrome is optional — the command skips cleanly without it.
+- **UI regression checks in the repo.** `npm run check:ui` runs headless
+  web-view checks (markers, scopes, A/B compare, visual compare); Chrome is
+  optional and the command skips cleanly without it.
+
+**Config migration:** older preference blobs load unchanged; the obsolete Deep
+QC keys are dropped on first load.
 
 ## 0.7.1
 
