@@ -181,6 +181,8 @@ body {
 }
 .mini:hover { color: var(--accent); border-color: var(--accent); }
 .mini:active { transform: translateY(1px); }
+.mini.cam { padding: 3px 6px; display: inline-flex; align-items: center; }
+.mini.cam svg { width: 13px; height: 13px; display: block; }
 
 /* scrub bar */
 .scrub {

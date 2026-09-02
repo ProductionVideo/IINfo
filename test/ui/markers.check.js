@@ -84,6 +84,23 @@ setTimeout(function () {
     csvb.click();
     out.steps.push("csvReportLen:" + (q("#report-text") ? q("#report-text").value.length : -1));
     q("#report").close();
+    function nShots(){ return (window.__acts || []).filter(function(a){ return a[1] && a[1].type === "marker-shot"; }).length; }
+    // the camera button works regardless of the opt-in setting
+    var shotBtn = document.querySelector(".qc-row .mini.cam");
+    out.steps.push("shotBtn:" + (!!shotBtn && !!shotBtn.querySelector("svg")));
+    if (shotBtn) shotBtn.click();
+    var camShot = (window.__acts || []).filter(function(a){ return a[1] && a[1].type === "marker-shot"; }).pop();
+    out.steps.push("camShotStamp:" + (camShot ? String(camShot[1].value.tc) : "?"));
+    out.steps.push("autoShotsDefault:" + nShots());   // adds so far posted none (opt-in off) — only the camera click
+    // opt in via Tools > Storage, then a fresh marker should auto-screenshot
+    var stTab = [].slice.call(document.querySelectorAll(".drawer-tab")).find(function(b){ return /Storage/.test(b.textContent); });
+    if (stTab) stTab.click();
+    var msCb = [].slice.call(document.querySelectorAll(".drawer-body[data-tab=storage] input[type=checkbox]")).find(function(c){ return /Screenshot each new/.test(c.parentNode.textContent); });
+    out.steps.push("markerShotCb:" + !!msCb);
+    if (msCb) { msCb.checked = true; msCb.dispatchEvent(new Event("change")); }
+    var mk2 = [].slice.call(document.querySelectorAll(".qc-bar .btn")).find(function(b){ return /Mark/.test(b.textContent); });
+    mk2.click();
+    out.steps.push("autoShotsAfterOptIn:" + nShots());
     var before = document.querySelectorAll(".qc-row").length;
     var del = [].slice.call(document.querySelectorAll(".qc-row .mini")).find(function(b){ return b.textContent === "✕"; });
     if (del) del.click();
@@ -111,9 +128,14 @@ function run(chrome) {
   assert.equal(S("editorOpen"), "true", "manual marker row should open an editor");
   assert.equal(S("rowsUnresolved"), "1", "one marker resolved -> one unresolved");
   assert.ok(S("acts").indexOf('"seek-abs"') >= 0, "clicking a row should seek");
+  assert.equal(S("shotBtn"), "true", "every marker row should have a camera (svg) screenshot button");
+  assert.match(S("camShotStamp"), /^\d\d:\d\d:\d\d[:;]\d\d$/, "the shot carries the marker's media timecode (raw tc in the action), not wall-clock time");
+  assert.equal(S("autoShotsDefault"), "1", "with the opt-in off, adding markers must NOT auto-screenshot (only the camera click counts)");
+  assert.equal(S("markerShotCb"), "true", "Storage tab should have a 'screenshot each new marker' checkbox");
+  assert.equal(S("autoShotsAfterOptIn"), "2", "with the opt-in on, a new marker auto-posts marker-shot");
   assert.equal(S("reordered"), "true", "panel reorder should take effect");
   assert.ok(Number(S("reportLen")) > 100, "Markdown report should be non-trivial");
-  assert.equal(S("rowsAfterDelete"), "2->1", "delete should remove a row");
+  assert.equal(S("rowsAfterDelete"), "3->2", "delete should remove a row");
   assert.ok(S("firstNote").indexOf("torn field/error") >= 0, "note + severity edit should serialise back");
 }
 

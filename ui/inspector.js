@@ -838,6 +838,17 @@
         bE.addEventListener("click", function (e) { e.stopPropagation(); editingId = editingId === ev.id ? null : ev.id; idSig = ""; render(); });
         tools.appendChild(bE);
       }
+      var bS = el("button", "mini cam");
+      bS.innerHTML = ICONS.camera;
+      bS.title = "Screenshot this frame beside the video file";
+      bS.addEventListener("click", function (e) {
+        e.stopPropagation();
+        // read the marker back from state — a note just typed into the inline
+        // editor commits on this same click's blur, before the click lands
+        var j = markerAt(ev.id), live = j >= 0 ? state.markers.list[j] : ev;
+        iina.postMessage("iinfo-action", { type: "marker-shot", value: { note: live.note || "", tc: live.tc || null, tMs: live.tMs } });
+      });
+      tools.appendChild(bS);
       var bR = el("button", "mini", ev.resolved ? "reopen" : "resolve");
       bR.addEventListener("click", function (e) { e.stopPropagation(); mutateMarker(ev.id, function (x) { return QCE.withResolved(x, !x.resolved); }); });
       var bX = el("button", "mini", "✕");
@@ -1161,7 +1172,8 @@
     var next = fn(state.markers.list[i]); if (!next) return;
     state.markers.list = state.markers.list.slice();
     state.markers.list[i] = next;
-    pushMarkers(); mkRefresh();
+    pushMarkers();
+    setTimeout(mkRefresh, 0);   // let an in-flight click on this row (e.g. the camera) land first
   }
   function removeMarker(id) {
     state.markers.list = state.markers.list.filter(function (e) { return e.id !== id; });
@@ -1187,6 +1199,10 @@
     state.markers.list = state.markers.list.concat([ev]);
     state.markerSel = ev.id;
     editingId = ev.id;
+    // opt-in: a screenshot beside the media for the just-marked frame
+    if (state.settings.markerShot) {
+      try { iina.postMessage("iinfo-action", { type: "marker-shot", value: { note: "", tc: ev.tc || null, tMs: ev.tMs } }); } catch (e) {}
+    }
     if (!state.panels.markers) {
       state.panels.markers = true;
       applyVisibility(); buildDrawer(); pushConfig();
@@ -1413,6 +1429,15 @@
     sb.appendChild(scRow);
     sb.appendChild(el("div", "drawer-note",
       "Off: markers are kept in the plugin's data folder, keyed to the file. On: a .iinfo.json is written next to the media so the markers travel with it."));
+
+    var msRow = el("label", "set-row");
+    var msb = el("input"); msb.type = "checkbox"; msb.checked = !!state.settings.markerShot;
+    msb.addEventListener("change", function () { state.settings.markerShot = msb.checked; pushConfig(); });
+    msRow.appendChild(msb);
+    msRow.appendChild(el("span", "set-label", "Screenshot each new QC marker"));
+    sb.appendChild(msRow);
+    sb.appendChild(el("div", "drawer-note",
+      "On: a PNG of the marked frame is saved next to the video for every marker you add. The camera button on a marker row always works regardless of this setting."));
     if (state.markers.sidecarError)
       sb.appendChild(el("div", "drawer-note bad", "This media's folder is read-only — markers fell back to the data folder."));
 

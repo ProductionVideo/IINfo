@@ -32,7 +32,7 @@ your layout persists.
 | **A/V Sync & Dropped Frames** | A/V-sync offset (ms) + history, decoder / output drop counts, mistimed / delayed frames, display vs filtered fps, demux cache |
 | **A/B Compare** | Line two open windows up as A / B — offset, link transport, step together frame-accurately |
 | **A/B Technical Diff** | A and B's codec / resolution / fps / pixel format / bit depth / colour / audio params side by side, every difference flagged |
-| **QC Markers** | Mark issues at the exact frame, tag and navigate them, see them on the scrub bar, export |
+| **QC Markers** | Mark issues at the exact frame, tag and navigate them, see them on the scrub bar, auto-screenshot beside the file, export |
 | **Audio Waveform** | Live scrolling min–max + RMS curves, per channel or summed. Themed accent; red only where a sample clips |
 | **Audio Levels** | Per-channel meters — RMS on a theme-accent gradient that turns amber/red only near clip, plus peak and peak-hold ticks |
 | **EBU R128 Loudness** | Momentary / Short-term / Integrated LUFS, LRA, True Peak, target reference, momentary sparkline |
@@ -61,6 +61,14 @@ Notice a problem → `⇧M` in the inspector, or `⌥⇧M` anywhere in IINA → 
 frame is captured instantly with its timecode, frame, fps and (if A/B is linked)
 the A and B identities. Tag each marker (category / severity / note), walk them
 with Prev / Next, and they show as ticks on the scrub bar — click to seek.
+
+Each marker row has a camera button that seeks to that frame and grabs a
+full-resolution PNG next to the video file, named with the note
+(`<clip.ext> - <note> HH.MM.SS;FF.png`, where the timecode is the position
+through the clip). The toolbar / `⌥⇧S` screenshot lands in the same place. Turn
+on **Tools ▸ Storage ▸ Screenshot each new QC marker** to also grab one
+automatically every time you add a marker.
+
 Markers persist per media (in the plugin data folder, or a `<media>.iinfo.json`
 sidecar if you turn that on in Tools ▸ Storage) and export from **Tools ▸
 Actions** as a **Markdown** report, CSV, or full-schema JSON. **Copy QC report**

@@ -6,6 +6,47 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Screenshots write next to the media file (1.0)
+
+Every screenshot — the toolbar / `⌥⇧S` button, the per-row camera button, and
+(opt-in) the automatic grab on each new marker — saves a PNG beside the video
+file instead of mpv's screenshot folder / the plugin data dir.
+
+- **Written by mpv, not the plugin `file` API.** `mpv.command("screenshot-to-file",
+  [path, "video"])` — `"video"` gives a clean, full-resolution frame (no OSD, no
+  subs). mpv owns the media file, so its directory is writable and this bypasses
+  the plugin's file sandbox. Same call the A/B visual-compare grab already uses.
+  When the media has no local path (a stream) the toolbar button falls back to
+  plain `screenshot`.
+- **Naming.** `<clip.ext> <stamp>.png`, or `<clip.ext> - <note> <stamp>.png` when
+  there's a note. The clip's **full leaf name including its extension** is the
+  prefix (a QC operator recognises `reel2_v014.mov`, not `reel2_v014`).
+- **`<stamp>` is the position through the file, never wall-clock time** —
+  `HH.MM.SS;FF` (dots between h/m/s, `;` before frames — same shape drop-frame
+  or not; chosen for a clean filename over strict SMPTE punctuation), or
+  `<ms>ms` when there is no timecode at all. Notes are stripped of
+  path/reserved characters, capped at 60.
+- **Automatic grab on every new marker is opt-in** — `settings.markerShot`
+  (Tools ▸ Storage), **off by default**: a marker is cheap, a full-res PNG per
+  marker is not, and not every QC pass wants a contact sheet. The per-row camera
+  button is always available regardless.
+- **Never overwrites** — a numeric ` (2)`, ` (3)` … suffix is appended if the
+  target exists (checked with `file.exists`, which works on arbitrary local
+  paths under the `file-system` permission, same as marker sidecars).
+- **The row button seeks first.** A marker screenshot must be of the marked
+  frame, not whatever is on screen, so `shotAtMarker` seeks to the marker and
+  waits for `mpv.playback-restart` before grabbing (1.5 s timeout fallback). The
+  new-marker grab and the toolbar button capture immediately.
+- **The camera button reads the note back from state at click time** and the
+  marker list defers its re-render one tick (`setTimeout(mkRefresh, 0)`): a note
+  just typed into the inline editor commits on the button click's own blur, and
+  a synchronous rebuild would otherwise destroy the button before the click
+  lands (so the grab went out note-less).
+- No version bump: added during the 1.0 stabilisation window, before the release
+  was tagged.
+
+---
+
 ## Deep QC removed for 1.0
 
 Deep QC (the `@iinfoqc` automated-defect scan added in v0.7.0) is **removed from

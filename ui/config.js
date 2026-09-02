@@ -58,7 +58,7 @@ var IINfoConfig = (function () {
   function settingsDefault() {
     return {
       theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15",
-      markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false,
+      markerSidecar: false, markerShot: false, drawerTab: "panels", abtechDiffOnly: false,
       experimental: false,
       scope: scopeDefault(),
     };
@@ -96,6 +96,7 @@ var IINfoConfig = (function () {
       monoFont: typeof s.monoFont === "string" && s.monoFont ? s.monoFont : DEFAULT_MONO,
       textSize: pick(String(s.textSize), TEXT_SIZES, "1.15"),
       markerSidecar: bool(s.markerSidecar, false),
+      markerShot: bool(s.markerShot, false),
       drawerTab: pick(s.drawerTab, DRAWER_TABS, "panels"),
       abtechDiffOnly: bool(s.abtechDiffOnly, false),
       experimental: bool(s.experimental, false),

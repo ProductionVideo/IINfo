@@ -5,6 +5,15 @@
 The feature set has been stable and in daily use for a while; 1.0 draws the
 line and hardens the internals.
 
+**Screenshots land next to the video file.** The toolbar / `⌥⇧S` screenshot now
+writes beside the media instead of into mpv's screenshot folder, named
+`<clip.ext> HH.MM.SS;FF.png` — the position through the file, never wall-clock
+time. Every QC marker row has a camera button that seeks to that frame and grabs
+it with the marker note in the name (`<clip.ext> - <note> HH.MM.SS;FF.png`).
+Optionally (Tools ▸ Storage ▸ *Screenshot each new QC marker*, off by default) a
+screenshot is also taken automatically whenever you add a marker. Grabs never
+overwrite an existing file.
+
 **Deep QC removed.** The experimental automated-defect scan is gone from this
 release while its correctness and performance are worked out separately. Its
 detectors, panel and menu path are removed; any automatic markers you already

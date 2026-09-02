@@ -83,7 +83,7 @@ var iinfocfg = (function () {
   function settingsDefault() {
     return {
       theme: "black", monoFont: DEFAULT_MONO, textSize: "1.15",
-      markerSidecar: false, drawerTab: "panels", abtechDiffOnly: false,
+      markerSidecar: false, markerShot: false, drawerTab: "panels", abtechDiffOnly: false,
       experimental: false,
       scope: scopeDefault(),
     };
@@ -121,6 +121,7 @@ var iinfocfg = (function () {
       monoFont: typeof s.monoFont === "string" && s.monoFont ? s.monoFont : DEFAULT_MONO,
       textSize: pick(String(s.textSize), TEXT_SIZES, "1.15"),
       markerSidecar: bool(s.markerSidecar, false),
+      markerShot: bool(s.markerShot, false),
       drawerTab: pick(s.drawerTab, DRAWER_TABS, "panels"),
       abtechDiffOnly: bool(s.abtechDiffOnly, false),
       experimental: bool(s.experimental, false),
@@ -488,6 +489,111 @@ function framesToTimecode(frameNumber, fps) {
   return pad(hh) + ":" + pad(mm) + ":" + pad(ss) + sep + pad(ff);
 }
 
+/* ---- screenshots ------------------------------------------------------
+ * mpv writes the frame itself (screenshot-to-file, "video" = clean, full-res),
+ * so this bypasses the plugin file sandbox — the grab lands next to the media
+ * file. Callers: the toolbar / ⌥⇧S button (shotNow), the per-marker camera
+ * button in the web view (shotAtMarker — seeks to the frame first), and
+ * markHere() when the "screenshot each marker" opt-in is on. */
+
+// { dir, leaf } for the current LOCAL media file (leaf keeps its extension —
+// the screenshot is named "<leaf> …"), or null for a stream / no path
+function mediaFile() {
+  const p = str("path");
+  if (!p || p.indexOf("://") >= 0) return null;
+  const slash = p.lastIndexOf("/");
+  return {
+    dir: slash >= 0 ? p.slice(0, slash) : ".",
+    leaf: slash >= 0 ? p.slice(slash + 1) : p,
+  };
+}
+// a filename-safe fragment: strip control chars + the path/Windows-reserved
+// set, collapse whitespace, cap the length
+function fsSafe(s) {
+  return String(s == null ? "" : s)
+    .replace(/[\x00-\x1f\/\\:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 60);
+}
+// position through the media as a filename-clean timecode — "HH.MM.SS;FF"
+// (dots between h/m/s, ";" before frames). Falls back to milliseconds when
+// there's no timecode. NEVER wall-clock time.
+function shotStamp(tc, tMs) {
+  if (tc) {
+    const p = String(tc).trim().split(/[:;]/);
+    if (p.length === 4 && p.every((x) => /^\d+$/.test(x))) {
+      return p[0] + "." + p[1] + "." + p[2] + ";" + p[3];
+    }
+  }
+  return Math.max(0, Math.round(tMs || 0)) + "ms";
+}
+
+// the current playhead as { tc, tMs } — same tc rules markHere() uses
+function nowStamp() {
+  const t = num("time-pos");
+  const fps = num("container-fps") || num("estimated-vf-fps");
+  let frame = num("estimated-frame-number");
+  if (frame == null && fps && t != null) frame = Math.round(t * fps);
+  const tc = framesToTimecode(frame, fps);
+  return { tc: tc && tc.indexOf("-") < 0 ? tc : null, tMs: t != null ? Math.round(t * 1000) : 0 };
+}
+
+// the toolbar / ⌥⇧S screenshot — beside the media file like a marker grab, or
+// mpv's own screenshot dir when the media has no local path (a stream)
+function shotNow() {
+  if (!alive) return;
+  if (!mediaFile()) {
+    try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {}
+    return;
+  }
+  const s = nowStamp();
+  grabShot(null, s.tc, s.tMs);
+}
+
+let shotPending = null;    // a marker screenshot waiting on core.seekTo() to land
+let shotTimer = null;
+
+// write a screenshot of the CURRENT frame beside the media. note "" ->
+// "<clip.ext> <stamp>.png"; note set -> "<clip.ext> - <note> <stamp>.png".
+// Never overwrites.
+function grabShot(note, tc, tMs) {
+  if (!alive) return;
+  const mf = mediaFile();
+  if (!mf) { core.osd("IINfo: screenshot needs a local video file"); return; }
+  const n = fsSafe(note), stamp = shotStamp(tc, tMs);
+  const name = n ? mf.leaf + " - " + n + " " + stamp : mf.leaf + " " + stamp;
+  let target = mf.dir + "/" + name + ".png";
+  try {
+    for (let k = 2; k < 200 && file.exists(target); k++) target = mf.dir + "/" + name + " (" + k + ").png";
+  } catch (e) {}
+  try {
+    mpv.command("screenshot-to-file", [target, "video"]);
+    core.osd("IINfo: screenshot → " + target.split("/").pop());
+  } catch (e) {
+    console.log("IINfo: screenshot-to-file — " + e);
+    core.osd("IINfo: screenshot failed");
+  }
+}
+
+// per-marker button: land on the marked frame, then grab it
+function shotAtMarker(m) {
+  if (!alive || !m) return;
+  const tMs = typeof m.tMs === "number" ? m.tMs : null;
+  const now = num("time-pos");
+  if (tMs == null || (now != null && Math.abs(now * 1000 - tMs) < 60)) {
+    grabShot(m.note, m.tc, tMs);
+    return;
+  }
+  shotPending = { note: m.note, tc: m.tc || null, tMs: tMs };
+  if (shotTimer) clearTimeout(shotTimer);
+  shotTimer = setTimeout(fireShotPending, 1500);   // fallback if playback-restart never comes
+  try { core.seekTo(tMs / 1000); } catch (e) {}
+}
+function fireShotPending() {
+  if (shotTimer) { clearTimeout(shotTimer); shotTimer = null; }
+  const p = shotPending; shotPending = null;
+  if (p) grabShot(p.note, p.tc, p.tMs);
+}
+
 /* ------------------------------------------------------------ audio filter
  *
  * The whole lifecycle is driven from tickFilter(), which runs on every poll
@@ -722,7 +828,8 @@ function runAction(type, value) {
       case "toggle-pause":   flag("pause") ? core.resume() : core.pause(); break;
       case "play":           core.resume(); break;
       case "pause":          core.pause(); break;
-      case "screenshot":     mpv.command("screenshot", ["video"]); core.osd("IINfo: exact-frame screenshot saved"); break;
+      case "screenshot":     shotNow(); break;
+      case "marker-shot":    shotAtMarker(value); break;
       case "seek-abs":       if (typeof value === "number") core.seekTo(value); break;
       case "seek-rel":       if (typeof value === "number") core.seek(value, false); break;
       case "nudge":          if (typeof value === "number") core.seek(value, true); break;
@@ -870,6 +977,10 @@ function markHere() {
   qcList = qcList.concat([ev]);
   qcGen++;
   persistMarkers(serializeMarkers());
+  // opt-in: a screenshot beside the media for every new marker (Tools ▸ Storage)
+  if (lastConfig && lastConfig.settings && lastConfig.settings.markerShot) {
+    try { grabShot(null, ev.tc, ev.tMs); } catch (e) {}
+  }
   core.osd("IINfo: QC marker " + (ev.tc || (ev.tMs / 1000).toFixed(2) + "s"));
   if (wantWindow) { try { standaloneWindow.postMessage("iinfo-data", collect()); } catch (e) {} }
 }
@@ -1316,7 +1427,7 @@ try {
   menu.addItem(menu.separator());
   menu.addItem(menu.item("IINfo: Previous Frame", pin(() => { try { mpv.command("frame-back-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+LEFT" }));
   menu.addItem(menu.item("IINfo: Next Frame", pin(() => { try { mpv.command("frame-step", []); } catch (e) {} }), { keyBinding: "Alt+Shift+RIGHT" }));
-  menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { mpv.command("screenshot", ["video"]); core.osd("IINfo: screenshot saved"); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
+  menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { shotNow(); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
   menu.addItem(menu.item("IINfo: Mark QC Issue", pin(markHere), { keyBinding: "Alt+Shift+m" }));
   menu.addItem(menu.item("IINfo: Cycle Video Scope", pin(cycleScope), { keyBinding: "Alt+Shift+w" }));
 } catch (e) { console.log("IINfo: menu setup error — " + e); }
@@ -1354,6 +1465,10 @@ on("mpv.video-params.changed", () => {
 });
 // end of file — this can also fire mid-shutdown, so touch nothing in mpv
 on("mpv.end-file", () => { freshGen = -1; });
+
+// a seek finished and a frame is on screen — grab any marker screenshot that was
+// waiting on it (shotAtMarker seeks to the marked frame before capturing)
+on("mpv.playback-restart", () => { if (shotPending) fireShotPending(); });
 // mpv is going away: stop touching it FIRST, then persist (pure + file I/O only)
 on("mpv.shutdown", () => { alive = false; try { flushMarkersNow(); } catch (e) {} });
 

@@ -30,12 +30,14 @@ test("normalize keeps valid settings and rejects invalid ones", () => {
   const c = C.normalize({
     settings: {
       theme: "phosphor", textSize: 1.3, monoFont: "Menlo, monospace",
-      markerSidecar: true, drawerTab: "storage", experimental: true,
+      markerSidecar: true, markerShot: true, drawerTab: "storage", experimental: true,
       scope: { type: "parade", layout: "bottom", size: "xl", corner: "bl", bright: 0.4, opacity: 0.5 },
     },
   });
   assert.equal(c.settings.theme, "phosphor");
   assert.equal(c.settings.textSize, "1.3");
+  assert.equal(c.settings.markerShot, true);
+  assert.equal(C.normalize({}).settings.markerShot, false);   // opt-in, off by default
   assert.equal(c.settings.scope.layout, "bottom");
   assert.equal(c.settings.scope.bright, 0.4);
 
