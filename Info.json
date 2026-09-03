@@ -1,7 +1,7 @@
 {
   "name": "IINfo",
   "identifier": "com.jakestebbings.iinfo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Real-time video QC toolkit for IINA: timecode, frame metadata, signal/colour, A/V sync and dropped-frame counters, video scopes, A/B version compare, QC issue markers, audio waveform + level and EBU R128 loudness meters — in a floating inspector window.",
   "author": {
     "name": "Jake Stebbings",
@@ -9,7 +9,7 @@
     "url": "https://github.com/ProductionVideo/IINfo"
   },
   "ghRepo": "ProductionVideo/IINfo",
-  "ghVersion": 22,
+  "ghVersion": 23,
   "entry": "main.js",
   "globalEntry": "global.js",
   "permissions": [

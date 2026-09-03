@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0
+
+**Auto Compare — one action from two open videos to a linked, start-aligned A/B.**
+
+Press **A/B auto** in the transport bar (or `⌥⇧C`, or the *IINfo: Auto Compare*
+menu item) and IINfo takes the IINA player windows you already have open,
+assigns them A and B, pauses both, seeks both to the first frame, zeroes the
+offset and links transport — ready to QC. No need to open the Inspector in every
+window; one is enough.
+
+- Uses the **open windows** as the input, not filenames. Two eligible videos
+  open → those two. More than two → the two most recently opened. Filenames are
+  only a hint: `SHOW_v011` / `SHOW_v012` → A/B in version order, otherwise A/B
+  in open order.
+- The manual A/B controls are unchanged — Auto Compare just sets the sensible
+  starting state; Swap / offset / Set-as-sync / Unlink still work.
+- Audio-only and still-loading windows are ignored. With fewer than two videos
+  open, an on-screen message says so and nothing changes.
+
 ## 1.0.0 — first stable release
 
 The feature set has been stable and in daily use for a while; 1.0 draws the

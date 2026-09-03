@@ -40,12 +40,19 @@ your layout persists.
 
 ## A/B version compare
 
-Open two versions of a shot in one IINA (both windows in the same process).
-Assign them **A** and **B** in the A/B Compare panel, nudge **B** off **A** by
-whole frames (or *Set current as sync*), tick **Link transport**, and play /
-scrub / frame-step drive both windows. Every stop re-snaps A and B to exact
-frames — the accuracy lives in the paused state; ganged playback is best-effort
-(two mpv instances can't be sample-locked).
+Open two versions of a shot in one IINA (both windows in the same process), open
+the Inspector in **one** of them, and press **A/B auto** in the transport bar
+(or `⌥⇧C`): IINfo assigns the two open windows A and B, pauses both, seeks both
+to the first frame, zeroes the offset and links transport — start-aligned and
+ready to QC. More than two windows open → the two most recently opened; version
+numbers in the filenames (`_v011` / `_v012`) decide which is A, otherwise open
+order does.
+
+Or set it up by hand: assign **A** and **B** in the A/B Compare panel, nudge
+**B** off **A** by whole frames (or *Set current as sync*), tick **Link
+transport**. Either way, play / scrub / frame-step then drive both windows, and
+every stop re-snaps A and B to exact frames — the accuracy lives in the paused
+state; ganged playback is best-effort (two mpv instances can't be sample-locked).
 
 **A/B Technical Diff** lays the two files' technical metadata side by side and
 flags every mismatch (colour range, bit depth, codec, audio params…), with a
@@ -103,7 +110,7 @@ scrub bar.
 `Shift`+`←`/`→` frame step · `m` mute · `[`/`]` speed · `Home`/`End` · `⇧M` mark
 QC issue.
 **Menu bindings:** `⌥⇧I` toggle inspector · `⌥⇧←/→` frame step · `⌥⇧S`
-screenshot · `⌥⇧M` mark QC issue · `⌥⇧W` cycle video scope.
+screenshot · `⌥⇧M` mark QC issue · `⌥⇧W` cycle video scope · `⌥⇧C` Auto Compare.
 
 **Tools drawer:** **Panels** (toggle + reorder) · **Appearance** (theme / font /
 size / experimental features) · **Storage** (marker location) · **Actions** (copy

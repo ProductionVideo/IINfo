@@ -24,7 +24,7 @@
 
 const { console, core, event, mpv, menu, standaloneWindow, preferences, file, utils, overlay } = iina;
 
-console.log("IINfo: main entry loading (v1.0.0)");
+console.log("IINfo: main entry loading (v1.1.0)");
 
 // iina.global is present only when Info.json declares a "globalEntry". Every
 // A/B-compare code path below is a guarded no-op without it, so single-player
