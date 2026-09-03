@@ -15,7 +15,7 @@ window.iina = (function () {
       players: [
         { id: "1", filename: "show_v011.mov", path: "/w/show_v011.mov", w: 1920, h: 1080, fps: 25, duration: 120, pos: 5, paused: true,
           tech: { container:"mov", vcodec:"prores", w:1920, h:1080, par:1, dar:"16:9", pixfmt:"yuv422p10le", range:"limited", matrix:"bt.709", primaries:"bt.709", transfer:"bt.709", fps:25, duration:120, frameCount:3000, vbitrate:178000000, acodec:"pcm_s24le", asr:48000, ach:2, alayout:"stereo", afmt:"s32", abitrate:2300000 } },
-        { id: "2", filename: "show_v012.mov", path: "/w/show_v012.mov", w: 1920, h: 1080, fps: 25, duration: 121, pos: 5.08, paused: true,
+        { id: "2", filename: "show_v012.mov", path: "/w/show_v012.mov", w: window.__oneVideo ? 0 : 1920, h: window.__oneVideo ? 0 : 1080, fps: 25, duration: 121, pos: 5.08, paused: true,
           tech: { container:"mov", vcodec:"prores", w:1920, h:1080, par:1, dar:"16:9", pixfmt:"yuv422p10le", range:"full", matrix:"bt.709", primaries:"bt.709", transfer:"bt.709", fps:25, duration:120, frameCount:3000, vbitrate:178000000, acodec:"pcm_s16le", asr:48000, ach:2, alayout:"stereo", afmt:"s16", abitrate:1500000 } }
       ]
     };
@@ -72,6 +72,14 @@ setTimeout(function () {
     if (plus5) plus5.click();
     out.steps.push("cmds:" + JSON.stringify(window.__cmds || []));
     out.steps.push("offLabel:" + (q(".cmp-off") ? q(".cmp-off").textContent : "?"));
+
+    // Auto Compare button — enabled with two eligible videos, posts op:"auto"
+    out.steps.push("autoEnabled:" + (q("#b-autocmp") && !q("#b-autocmp").disabled));
+    q("#b-autocmp").click();
+    out.steps.push("autoCmd:" + JSON.stringify((window.__cmds || []).filter(function(c){ return c.op === "auto"; })));
+    window.__oneVideo = true; window.iina.postMessage("iinfo-poll");
+    out.steps.push("autoDisabledOneVideo:" + q("#b-autocmp").disabled);
+    window.__oneVideo = false; window.iina.postMessage("iinfo-poll");
     var atb = [].slice.call(document.querySelectorAll("#drawer label")).find(function(l){ return /A\\/B Technical Diff/.test(l.textContent); });
     if (atb) { var acb = atb.querySelector("input"); acb.checked = true; acb.dispatchEvent(new Event("change")); }
     window.iina.postMessage("iinfo-poll");
@@ -94,6 +102,9 @@ function run(chrome) {
   assert.ok(gangs.some((g) => g.action === "play"), "pausing a paused pair gangs a play");
   const cmds = JSON.parse(S("cmds"));
   assert.ok(cmds.some((c) => c.op === "offset-frames" && c.delta === 5), "+5f sends offset-frames");
+  assert.equal(S("autoEnabled"), "true", "Auto Compare button enabled with two eligible videos");
+  assert.ok(JSON.parse(S("autoCmd")).length === 1, "Auto Compare button posts a single op:auto");
+  assert.equal(S("autoDisabledOneVideo"), "true", "Auto Compare button disables when only one eligible video is open");
   assert.ok(Number(S("abtechRows")) > 5, "tech-diff table populated");
   assert.ok(Number(S("abtechDiffRows")) >= 1, "range/audio differences flagged");
 }

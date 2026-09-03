@@ -6,6 +6,39 @@ FFmpeg/mpv filter use. Newest first.
 
 ---
 
+## Auto Compare orchestrates the existing A/B system (1.1)
+
+One action — `⌥⇧C` / the transport-bar button / a menu item — that takes the
+already-open IINA windows to a linked, start-aligned A/B comparison.
+
+- **It is not a new engine.** `op: "auto"` in `global.js`'s `onCompareCmd` sets
+  the same fields the manual buttons set (`aId`, `bId`, offset 0, `linked`),
+  sends the existing `pause` + `seek-start` gang verbs, then calls the existing
+  `alignBoth()` after a 700 ms settle. `alignBoth` with offset 0 and both players
+  near 0 is an idempotent exact-seek to frame 0 — it *is* the "wait for accurate
+  seek" step. No new sync/seek code.
+- **Open windows are the input, not filenames.** `pickAutoCompare(players)` in
+  `lib/sync.js` (pure, tested, inlined into `global.js`): eligible = has a path,
+  real `w`/`h` and a `duration` (excludes audio-only and not-yet-loaded
+  windows). Exactly two → those two. More than two → the two most recently
+  opened, ranked by a `seq` the global entry stamps on each player's first
+  `hello`. Filenames are a *hint only*: `parseVersion()` (leading `vNNN`, else a
+  trailing number) decides A vs B when both carry a version and they differ;
+  otherwise open order does. No filename-family matching, no project/version
+  discovery — explicitly out of scope.
+- **No new Inspector requirement.** `main.js` already registers every player
+  with the global entry (`gHello` at init, `gBeat` every 2 s) regardless of
+  whether its Inspector is open, so the registry always has the candidate list.
+  One open Inspector is enough to drive the ganged transport (`ganged()` keys
+  off `linked` alone, and `onGang` relays to A/B regardless of sender).
+- **Feedback:** a new `iinfo/notify` message → `core.osd` on every player, used
+  for the "A/B — a.mov · b.mov (version order)" confirmation and the
+  "needs two open videos" / "needs the global entry" messages.
+- Manual assign / swap / offset / set-sync / unlink are untouched; Auto Compare
+  is re-runnable at any time.
+
+---
+
 ## Screenshots write next to the media file (1.0)
 
 Every screenshot — the toolbar / `⌥⇧S` button, the per-row camera button, and

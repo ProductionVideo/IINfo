@@ -1564,6 +1564,20 @@
     if (isFinite(pk)) chips.push(["peak " + fmt(pk, 1) + " dBFS", pk > -0.1 ? "bad" : pk > -3 ? "warn" : ""]);
     renderMeta(chips);
 
+    // Auto Compare button — live when the global entry knows 2+ open videos
+    var ac = $("b-autocmp");
+    if (ac) {
+      var c = d.compare, elig = 0;
+      if (c && c.state && c.players) {
+        for (var pi = 0; pi < c.players.length; pi++) {
+          var pl = c.players[pi];
+          if (pl.path && pl.w && pl.h && pl.duration) elig++;
+        }
+      }
+      ac.disabled = elig < 2;
+      ac.classList.toggle("is-active", !!(c && c.state && c.state.linked && c.state.aId && c.state.bId));
+    }
+
     // header
     $("fname").textContent = d.file.name || "—";
     $("fname").title = d.file.path || "";
@@ -1735,6 +1749,9 @@
   $("b-next").addEventListener("click", function () { act("frame-next"); });
   $("b-pause").addEventListener("click", function () { act("toggle-pause"); });
   $("b-shot").addEventListener("click", function () { act("screenshot"); });
+  $("b-autocmp").addEventListener("click", function () {
+    try { iina.postMessage("iinfo-compare-cmd", { op: "auto" }); } catch (e) {}
+  });
   $("b-tools").addEventListener("click", function () { $("drawer").classList.toggle("open"); });
 
   $("jump-group").addEventListener("click", function (e) {

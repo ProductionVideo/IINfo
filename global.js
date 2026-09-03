@@ -28,7 +28,7 @@
 const { console } = iina;
 const G = iina.global;
 
-console.log("IINfo: global entry loading (v1.0.0)");
+console.log("IINfo: global entry loading (v1.1.0)");
 
 /* ------------------------------------------------------------ sync maths
  * Inlined from lib/sync.js (IINA's require() won't return module.exports).
@@ -94,10 +94,40 @@ var sync = (function () {
     if (s.aId == null || s.bId == null) s.linked = false;
     return s;
   }
+  function parseVersion(name) {
+    if (!name || typeof name !== "string") return null;
+    var m = name.match(/(?:^|[^a-z0-9])v(\d{1,4})(?:[^0-9]|$)/i);
+    if (m) return parseInt(m[1], 10);
+    m = name.match(/(?:^|[ _\-])(\d{2,4})(?:\.[a-z0-9]+)?$/i);
+    if (m) return parseInt(m[1], 10);
+    return null;
+  }
+  function pickAutoCompare(players, opts) {
+    var list = [];
+    for (var k in players) {
+      if (!players.hasOwnProperty(k)) continue;
+      var p = players[k];
+      if (p && p.path && p.w > 0 && p.h > 0 && p.duration > 0) list.push(p);
+    }
+    if (list.length < 2) return { error: "need two open videos" };
+    function seqOf(p) { return typeof p.seq === "number" ? p.seq : -1; }
+    function idNum(p) { var n = parseInt(p.id, 10); return isFinite(n) ? n : 0; }
+    list.sort(function (a, b) { return (seqOf(b) - seqOf(a)) || (idNum(a) - idNum(b)); });
+    var x = list[0], y = list[1];
+    var vx = parseVersion(x.filename), vy = parseVersion(y.filename);
+    var a, b, note;
+    if (vx != null && vy != null && vx !== vy) {
+      a = vx < vy ? x : y; b = a === x ? y : x; note = "version order";
+    } else {
+      a = seqOf(x) <= seqOf(y) ? x : y; b = a === x ? y : x; note = "open order";
+    }
+    return { aId: String(a.id), bId: String(b.id), picked: [String(x.id), String(y.id)], note: note };
+  }
   return {
     rationalize: rationalize, fpsNum: fpsNum, timeToFrame: timeToFrame, frameToTime: frameToTime,
     computeOffset: computeOffset, bumpOffsetFrames: bumpOffsetFrames, bumpOffsetSec: bumpOffsetSec,
     targetForB: targetForB, detectFpsMismatch: detectFpsMismatch, reconcileCompare: reconcileCompare,
+    parseVersion: parseVersion, pickAutoCompare: pickAutoCompare,
   };
 })();
 
@@ -121,6 +151,7 @@ var _Date = Date;
   var bcPending = false;
   var alignTimer = null;
   var BEAT_TTL = 20000;
+  var openSeq = 0;   // monotonic open-order counter — first hello per player wins one
   var vc = { host: null, pending: null, grabTimer: null, again: false };   // A/B visual-compare orchestration
 
   function onMsg(name, fn) { PINS.push(fn); G.onMessage(name, fn); }
@@ -162,6 +193,10 @@ var _Date = Date;
       try { G.postMessage(label, name, data); }
       catch (e) { console.log("IINfo global: send " + name + " -> " + label + " — " + e); }
     });
+  }
+
+  function notifyAll(text) {
+    _Object.keys(players).forEach(function (id) { toPlayer(id, "iinfo/notify", { text: text }); });
   }
 
   function broadcast() {
@@ -255,7 +290,8 @@ var _Date = Date;
     var id = _String(playerID);
     var prev = players[id] || {};
     var pathChanged = !!(prev.path && data && data.path && prev.path !== data.path);
-    players[id] = _Object.assign({}, prev, data || {}, { id: id, lastBeat: _Date.now() });
+    var seq = typeof prev.seq === "number" ? prev.seq : (openSeq++);
+    players[id] = _Object.assign({}, prev, data || {}, { id: id, seq: seq, lastBeat: _Date.now() });
     toPlayer(id, "iinfo/you-are", { id: id });
     if (pathChanged && (id === compare.aId || id === compare.bId)) {
       compare.offsetFrames = 0; compare.offsetSec = 0;
@@ -303,6 +339,29 @@ var _Date = Date;
       case "link":    compare.linked = !!(compare.aId && compare.bId); break;
       case "unlink":  compare.linked = false; break;
       case "refresh": break;
+      case "auto": {
+        // one action: pick the pair, pause both, seek both to the start frame,
+        // zero the offset, link. Orchestrates the existing A/B primitives.
+        var r = sync.pickAutoCompare(players, {});
+        if (r.error) { notifyAll("IINfo: Auto Compare needs two open videos"); return; }
+        compare.aId = r.aId; compare.bId = r.bId;
+        compare.offsetFrames = 0; compare.offsetSec = 0; compare.linked = false;
+        if (compare.vcompare) vcStop();
+        recomputeDerived();
+        var an = (rec(r.aId) || {}).filename || "A";
+        var bn = (rec(r.bId) || {}).filename || "B";
+        broadcast();   // show the assignment in any open inspector while the seeks run
+        toAB({ action: "pause" }, { action: "pause" });
+        toAB({ action: "seek-start" }, { action: "seek-start" });
+        var settle = function () {
+          compare.linked = !!(compare.aId && compare.bId);
+          alignBoth();   // idempotent exact-seek to frame 0, offset 0 — the "seek completed" step
+        };
+        if (typeof setTimeout === "function") setTimeout(settle, 700); else settle();
+        notifyAll("IINfo: A/B — " + an + "  ·  " + bn + "  (" + r.note + ")");
+        console.log("IINfo global: auto-compare A=" + r.aId + " B=" + r.bId + " (" + r.note + ")");
+        return;
+      }
       case "offset-frames":
         if (compare.mode === "elapsed") {
           compare.offsetSec = (compare.offsetSec || 0) + (cmd.delta || 0) / f;
