@@ -138,3 +138,63 @@ test("reconcileCompare keeps a healthy link", () => {
   const s = S.reconcileCompare({ aId: "1", bId: "2", linked: true }, players);
   assert.equal(s.linked, true);
 });
+
+/* ------------------------------------------------------------ auto compare */
+
+test("parseVersion: leading v wins, then trailing number, else null", () => {
+  assert.equal(S.parseVersion("SHOW_v011.mov"), 11);
+  assert.equal(S.parseVersion("SHOW_V012.mov"), 12);
+  assert.equal(S.parseVersion("shot v3 draft.mov"), 3);
+  assert.equal(S.parseVersion("cut_003.mov"), 3);
+  assert.equal(S.parseVersion("render 47.mov"), 47);
+  assert.equal(S.parseVersion("OLD_RENDER.mov"), null);
+  assert.equal(S.parseVersion("CLIENT_FIX_FINAL.mov"), null);
+  assert.equal(S.parseVersion(""), null);
+  assert.equal(S.parseVersion(null), null);
+});
+
+const V = (id, name, extra) => Object.assign(
+  { id: id, path: "/w/" + name, filename: name, w: 1920, h: 1080, duration: 120 }, extra || {});
+
+test("pickAutoCompare: exactly two videos -> both, version order picks A/B", () => {
+  const r = S.pickAutoCompare({ "1": V("1", "SHOW_v012.mov", { seq: 2 }), "2": V("2", "SHOW_v011.mov", { seq: 1 }) });
+  assert.equal(r.error, undefined);
+  assert.equal(r.aId, "2");   // v011
+  assert.equal(r.bId, "1");   // v012
+  assert.equal(r.note, "version order");
+});
+
+test("pickAutoCompare: no version hint -> earlier-opened is A", () => {
+  const r = S.pickAutoCompare({
+    "5": V("5", "CLIENT_FIX_FINAL.mov", { seq: 9 }),
+    "4": V("4", "OLD_RENDER.mov", { seq: 4 }),
+  });
+  assert.equal(r.aId, "4");   // lower seq
+  assert.equal(r.bId, "5");
+  assert.equal(r.note, "open order");
+});
+
+test("pickAutoCompare: more than two -> the two most recently opened", () => {
+  const r = S.pickAutoCompare({
+    "1": V("1", "a.mov", { seq: 1 }),
+    "2": V("2", "b.mov", { seq: 2 }),
+    "3": V("3", "c.mov", { seq: 3 }),
+  });
+  assert.deepEqual(r.picked.slice().sort(), ["2", "3"]);
+  assert.equal(r.aId, "2");   // earlier of the two picked
+  assert.equal(r.bId, "3");
+});
+
+test("pickAutoCompare: audio-only / unloaded windows are excluded", () => {
+  const r = S.pickAutoCompare({
+    "1": V("1", "vid.mov", { seq: 1 }),
+    "2": { id: "2", path: "/w/music.wav", filename: "music.wav", w: 0, h: 0, duration: 200, seq: 2 },
+    "3": { id: "3", path: "/w/loading.mov", filename: "loading.mov", seq: 3 }, // no w/h/duration yet
+  });
+  assert.equal(r.error, "need two open videos");
+});
+
+test("pickAutoCompare: fewer than two eligible -> error", () => {
+  assert.equal(S.pickAutoCompare({}).error, "need two open videos");
+  assert.equal(S.pickAutoCompare({ "1": V("1", "only.mov", { seq: 1 }) }).error, "need two open videos");
+});

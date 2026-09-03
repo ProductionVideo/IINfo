@@ -25,6 +25,15 @@ const cases = [
   ["targetForB", [10, -20]],
   ["detectFpsMismatch", [25, 29.97]],
   ["reconcileCompare", [{ aId: "1", bId: "2", linked: true }, { "1": {} }]],
+  ["parseVersion", ["SHOW_v012.mov"]],
+  ["parseVersion", ["cut_003.mov"]],
+  ["parseVersion", ["OLD_RENDER.mov"]],
+  ["pickAutoCompare", [{
+    "1": { id: "1", path: "/w/a_v011.mov", filename: "a_v011.mov", w: 1920, h: 1080, duration: 120, seq: 1 },
+    "2": { id: "2", path: "/w/a_v012.mov", filename: "a_v012.mov", w: 1920, h: 1080, duration: 120, seq: 2 },
+    "3": { id: "3", path: "/w/music.wav", filename: "music.wav", w: 0, h: 0, duration: 200, seq: 3 },
+  }]],
+  ["pickAutoCompare", [{ "1": { id: "1", path: "/w/only.mov", filename: "only.mov", w: 1920, h: 1080, duration: 10, seq: 1 } }]],
 ];
 
 for (const [fn, args] of cases) {

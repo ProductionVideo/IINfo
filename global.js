@@ -94,10 +94,40 @@ var sync = (function () {
     if (s.aId == null || s.bId == null) s.linked = false;
     return s;
   }
+  function parseVersion(name) {
+    if (!name || typeof name !== "string") return null;
+    var m = name.match(/(?:^|[^a-z0-9])v(\d{1,4})(?:[^0-9]|$)/i);
+    if (m) return parseInt(m[1], 10);
+    m = name.match(/(?:^|[ _\-])(\d{2,4})(?:\.[a-z0-9]+)?$/i);
+    if (m) return parseInt(m[1], 10);
+    return null;
+  }
+  function pickAutoCompare(players, opts) {
+    var list = [];
+    for (var k in players) {
+      if (!players.hasOwnProperty(k)) continue;
+      var p = players[k];
+      if (p && p.path && p.w > 0 && p.h > 0 && p.duration > 0) list.push(p);
+    }
+    if (list.length < 2) return { error: "need two open videos" };
+    function seqOf(p) { return typeof p.seq === "number" ? p.seq : -1; }
+    function idNum(p) { var n = parseInt(p.id, 10); return isFinite(n) ? n : 0; }
+    list.sort(function (a, b) { return (seqOf(b) - seqOf(a)) || (idNum(a) - idNum(b)); });
+    var x = list[0], y = list[1];
+    var vx = parseVersion(x.filename), vy = parseVersion(y.filename);
+    var a, b, note;
+    if (vx != null && vy != null && vx !== vy) {
+      a = vx < vy ? x : y; b = a === x ? y : x; note = "version order";
+    } else {
+      a = seqOf(x) <= seqOf(y) ? x : y; b = a === x ? y : x; note = "open order";
+    }
+    return { aId: String(a.id), bId: String(b.id), picked: [String(x.id), String(y.id)], note: note };
+  }
   return {
     rationalize: rationalize, fpsNum: fpsNum, timeToFrame: timeToFrame, frameToTime: frameToTime,
     computeOffset: computeOffset, bumpOffsetFrames: bumpOffsetFrames, bumpOffsetSec: bumpOffsetSec,
     targetForB: targetForB, detectFpsMismatch: detectFpsMismatch, reconcileCompare: reconcileCompare,
+    parseVersion: parseVersion, pickAutoCompare: pickAutoCompare,
   };
 })();
 
