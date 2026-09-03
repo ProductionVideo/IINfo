@@ -1430,6 +1430,10 @@ try {
   menu.addItem(menu.item("IINfo: Exact-Frame Screenshot", pin(() => { try { shotNow(); } catch (e) {} }), { keyBinding: "Alt+Shift+s" }));
   menu.addItem(menu.item("IINfo: Mark QC Issue", pin(markHere), { keyBinding: "Alt+Shift+m" }));
   menu.addItem(menu.item("IINfo: Cycle Video Scope", pin(cycleScope), { keyBinding: "Alt+Shift+w" }));
+  menu.addItem(menu.item("IINfo: Auto Compare", pin(() => {
+    if (G) gSend("iinfo/compare-cmd", { op: "auto" });
+    else core.osd("IINfo: A/B compare needs the global entry — quit and reopen IINA after updating");
+  }), { keyBinding: "Alt+Shift+c" }));
 } catch (e) { console.log("IINfo: menu setup error — " + e); }
 
 // bump the generation counter on any file / audio change. tickFilter() (run
@@ -1587,6 +1591,7 @@ if (G) {
   try {
     G.onMessage("iinfo/you-are", pin((d) => { if (d && d.id != null) myId = String(d.id); }));
     G.onMessage("iinfo/compare", pin((d) => { lastCompare = d && d.state ? d : null; }));
+    G.onMessage("iinfo/notify", pin((d) => { if (alive && d && d.text) { try { core.osd(String(d.text)); } catch (e) {} } }));
     G.onMessage("iinfo/gang-exec", pin((d) => {
       if (!d || !d.action || !alive) return;
       runAction(d.action, d.value);

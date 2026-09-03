@@ -151,6 +151,7 @@ var _Date = Date;
   var bcPending = false;
   var alignTimer = null;
   var BEAT_TTL = 20000;
+  var openSeq = 0;   // monotonic open-order counter — first hello per player wins one
   var vc = { host: null, pending: null, grabTimer: null, again: false };   // A/B visual-compare orchestration
 
   function onMsg(name, fn) { PINS.push(fn); G.onMessage(name, fn); }
@@ -192,6 +193,10 @@ var _Date = Date;
       try { G.postMessage(label, name, data); }
       catch (e) { console.log("IINfo global: send " + name + " -> " + label + " — " + e); }
     });
+  }
+
+  function notifyAll(text) {
+    _Object.keys(players).forEach(function (id) { toPlayer(id, "iinfo/notify", { text: text }); });
   }
 
   function broadcast() {
@@ -285,7 +290,8 @@ var _Date = Date;
     var id = _String(playerID);
     var prev = players[id] || {};
     var pathChanged = !!(prev.path && data && data.path && prev.path !== data.path);
-    players[id] = _Object.assign({}, prev, data || {}, { id: id, lastBeat: _Date.now() });
+    var seq = typeof prev.seq === "number" ? prev.seq : (openSeq++);
+    players[id] = _Object.assign({}, prev, data || {}, { id: id, seq: seq, lastBeat: _Date.now() });
     toPlayer(id, "iinfo/you-are", { id: id });
     if (pathChanged && (id === compare.aId || id === compare.bId)) {
       compare.offsetFrames = 0; compare.offsetSec = 0;
@@ -333,6 +339,29 @@ var _Date = Date;
       case "link":    compare.linked = !!(compare.aId && compare.bId); break;
       case "unlink":  compare.linked = false; break;
       case "refresh": break;
+      case "auto": {
+        // one action: pick the pair, pause both, seek both to the start frame,
+        // zero the offset, link. Orchestrates the existing A/B primitives.
+        var r = sync.pickAutoCompare(players, {});
+        if (r.error) { notifyAll("IINfo: Auto Compare needs two open videos"); return; }
+        compare.aId = r.aId; compare.bId = r.bId;
+        compare.offsetFrames = 0; compare.offsetSec = 0; compare.linked = false;
+        if (compare.vcompare) vcStop();
+        recomputeDerived();
+        var an = (rec(r.aId) || {}).filename || "A";
+        var bn = (rec(r.bId) || {}).filename || "B";
+        broadcast();   // show the assignment in any open inspector while the seeks run
+        toAB({ action: "pause" }, { action: "pause" });
+        toAB({ action: "seek-start" }, { action: "seek-start" });
+        var settle = function () {
+          compare.linked = !!(compare.aId && compare.bId);
+          alignBoth();   // idempotent exact-seek to frame 0, offset 0 — the "seek completed" step
+        };
+        if (typeof setTimeout === "function") setTimeout(settle, 700); else settle();
+        notifyAll("IINfo: A/B — " + an + "  ·  " + bn + "  (" + r.note + ")");
+        console.log("IINfo global: auto-compare A=" + r.aId + " B=" + r.bId + " (" + r.note + ")");
+        return;
+      }
       case "offset-frames":
         if (compare.mode === "elapsed") {
           compare.offsetSec = (compare.offsetSec || 0) + (cmd.delta || 0) / f;
