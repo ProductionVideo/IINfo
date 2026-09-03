@@ -107,6 +107,9 @@ body {
 .btn.mono { font-family: var(--mono); font-size: 11px; }
 .btn.sq { width: 34px; padding: 0; }
 .btn.xs { height: 26px; font-size: 11px; padding: 0 8px; border-radius: 6px; }
+.btn:disabled { opacity: .38; cursor: default; pointer-events: none; }
+#b-autocmp { font-size: 11px; letter-spacing: .02em; }
+#b-autocmp.is-active { border-color: var(--accent); color: var(--accent); }
 
 /* segmented groups */
 .seg-group {
